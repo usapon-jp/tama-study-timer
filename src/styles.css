@@ -153,8 +153,8 @@ button:disabled {
   border-radius: 50%;
   background: #fff4da;
   background-repeat: no-repeat;
-  background-position: center 26%;
-  background-size: 230%;
+  background-position: center 4px;
+  background-size: 170%;
   border: 1px solid var(--line);
 }
 

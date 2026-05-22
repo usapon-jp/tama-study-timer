@@ -364,7 +364,7 @@ function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc 
 function HomeScreen({ state, outfit, subject, progress, setTab, startTimer, setSubject }) {
   return (
     <div className="screen home-screen">
-      <TopBar title="たまの勉強タイマー" points={state.points} streak={state.streak} avatarSrc={asset(`avatar/full/${outfit.id}.png`)} />
+      <TopBar title="たまの勉強タイマー" points={state.points} streak={state.streak} avatarSrc={asset("crops/protagonist.png")} />
       <section className="hero-card">
         <div className="hero-copy">
           <span>今日の勉強時間</span>
