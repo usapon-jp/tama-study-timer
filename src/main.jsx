@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { registerServiceWorker } from "./registerServiceWorker";
 import {
   BookOpen,
   Check,
@@ -988,3 +989,4 @@ function resetLocal() {
 }
 
 createRoot(document.getElementById("root")).render(<App />);
+registerServiceWorker();
