@@ -23,6 +23,7 @@ import "./styles.css";
 
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const FOCUS_PRESETS = [5, 15, 25, 45, 60];
+const STUDY_BGM_SRC = asset("audio/study-bgm.mp3");
 const SUBJECTS = [
   { id: "math", label: "数学", icon: "quest-math.png" },
   { id: "english", label: "英語", icon: "quest-english.png" },
@@ -251,7 +252,7 @@ function App() {
   const [nowTick, setNowTick] = useState(Date.now());
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const audioContextRef = useRef(null);
-  const bgmNodesRef = useRef(null);
+  const bgmAudioRef = useRef(null);
   const previousSessionCountRef = useRef(state.sessions.length);
   const activeOutfit = OUTFITS.find((item) => item.id === state.selectedOutfitId) || OUTFITS[0];
   const selectedSubject = SUBJECTS.find((item) => item.id === state.selectedSubject) || SUBJECTS[0];
@@ -304,41 +305,23 @@ function App() {
   }
 
   function startBgm() {
-    const context = ensureAudioContext();
-    if (!context || bgmNodesRef.current) return;
-    const gain = context.createGain();
-    gain.gain.setValueAtTime(0.035, context.currentTime);
-    gain.connect(context.destination);
-    const notes = [261.63, 329.63, 392, 523.25];
-    const oscillators = notes.map((frequency, index) => {
-      const oscillator = context.createOscillator();
-      const noteGain = context.createGain();
-      oscillator.type = index % 2 ? "triangle" : "sine";
-      oscillator.frequency.value = frequency / (index > 1 ? 2 : 1);
-      noteGain.gain.value = index === 0 ? 0.44 : 0.18;
-      oscillator.connect(noteGain);
-      noteGain.connect(gain);
-      oscillator.start();
-      return oscillator;
+    ensureAudioContext();
+    if (!bgmAudioRef.current) {
+      const audio = new Audio(STUDY_BGM_SRC);
+      audio.loop = true;
+      audio.volume = 0.28;
+      audio.preload = "auto";
+      bgmAudioRef.current = audio;
+    }
+    bgmAudioRef.current.play().catch(() => {
+      // Mobile browsers require a user gesture before audio can start.
     });
-    bgmNodesRef.current = { gain, oscillators };
   }
 
   function stopBgm() {
-    const nodes = bgmNodesRef.current;
-    if (!nodes) return;
-    nodes.gain.gain.setTargetAtTime(0, audioContextRef.current.currentTime, 0.05);
-    window.setTimeout(() => {
-      nodes.oscillators.forEach((oscillator) => {
-        try {
-          oscillator.stop();
-        } catch {
-          // already stopped
-        }
-      });
-      nodes.gain.disconnect();
-    }, 120);
-    bgmNodesRef.current = null;
+    const audio = bgmAudioRef.current;
+    if (!audio) return;
+    audio.pause();
   }
 
   function playAlarm() {
