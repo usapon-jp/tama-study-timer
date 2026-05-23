@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BookOpen,
@@ -9,13 +9,14 @@ import {
   Clock3,
   Home,
   Music2,
+  Palette,
   Pencil,
   RotateCcw,
   Settings,
+  SlidersHorizontal,
   ShoppingBag,
   Sprout,
   Trophy,
-  X,
 } from "lucide-react";
 import "./styles.css";
 
@@ -29,17 +30,45 @@ const SUBJECTS = [
   { id: "japanese", label: "国語", icon: "quest-japanese.png" },
   { id: "free", label: "フリー", icon: "nav-quest.png" },
 ];
+const DEFAULT_CHART_COLORS = {
+  math: "#7f985e",
+  english: "#7aa6bd",
+  science: "#d8b85a",
+  social: "#c98766",
+  japanese: "#d78b9f",
+  free: "#9aa897",
+};
+const CHART_COLOR_SWATCHES = [
+  "#7f985e",
+  "#7aa6bd",
+  "#d8b85a",
+  "#c98766",
+  "#d78b9f",
+  "#9aa897",
+  "#b49bd4",
+  "#8f7b67",
+];
 const OUTFITS = [
-  { id: "outfit-n-1", name: "若葉の通学ワンピ", cost: 0 },
-  { id: "outfit-n-2", name: "花色カーデコーデ", cost: 120 },
-  { id: "outfit-n-3", name: "小さな庭仕事服", cost: 180 },
-  { id: "outfit-r-1", name: "青空リボンドレス", cost: 260 },
+  { id: "outfit-n-1", name: "森の勉強服", cost: 0 },
+  { id: "outfit-n-2", name: "やさしいカーデ", cost: 400 },
+  { id: "outfit-n-3", name: "リボンワンピース", cost: 600 },
+  { id: "outfit-r-1", name: "ナチュラルワンピ", cost: 450 },
   { id: "outfit-r-2", name: "星待ちラベンダー", cost: 360 },
   { id: "outfit-r-3", name: "夜色の魔法使い", cost: 460 },
   { id: "outfit-sr-1", name: "森の祝福ドレス", cost: 620 },
   { id: "outfit-sr-2", name: "水色星花ドレス", cost: 760 },
   { id: "outfit-sr-3", name: "春霞の花冠ドレス", cost: 900 },
 ];
+const STUDY_IMAGES = {
+  "outfit-n-1": "study/full/outfit-n-1.png",
+  "outfit-n-2": "study/full/outfit-n-2.png",
+  "outfit-n-3": "study/full/outfit-n-3.png",
+  "outfit-r-1": "study/full/outfit-r-1.png",
+};
+
+function studyImageFor(outfitId) {
+  return STUDY_IMAGES[outfitId] || STUDY_IMAGES["outfit-n-1"];
+}
 
 function asset(path) {
   if (!path) return "";
@@ -70,6 +99,14 @@ function defaultState() {
       elapsedBeforeStart: 0,
       lastDisplaySeconds: 25 * 60,
     },
+    sound: {
+      bgm: false,
+      alarm: true,
+    },
+    chartSettings: {
+      visibleSubjects: SUBJECTS.map((subject) => subject.id),
+      colors: DEFAULT_CHART_COLORS,
+    },
   };
 }
 
@@ -93,6 +130,27 @@ function normalizeState(raw) {
     unlockedOutfits: unlocked,
     sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, 40) : [],
     timer: { ...base.timer, ...(raw.timer || {}) },
+    sound: { ...base.sound, ...(raw.sound || {}) },
+    chartSettings: normalizeChartSettings(raw.chartSettings, base.chartSettings),
+  };
+}
+
+function normalizeChartSettings(settings, baseSettings = defaultState().chartSettings) {
+  const visible = Array.isArray(settings?.visibleSubjects)
+    ? settings.visibleSubjects.filter((id) => SUBJECTS.some((subject) => subject.id === id))
+    : baseSettings.visibleSubjects;
+  const colors = { ...baseSettings.colors };
+  if (settings?.colors && typeof settings.colors === "object") {
+    SUBJECTS.forEach((subject) => {
+      const color = settings.colors[subject.id];
+      if (typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color)) {
+        colors[subject.id] = color;
+      }
+    });
+  }
+  return {
+    visibleSubjects: visible.length ? visible : [SUBJECTS[0].id],
+    colors,
   };
 }
 
@@ -109,6 +167,58 @@ function formatTime(totalSeconds) {
   const minutes = String(Math.floor(safe / 60)).padStart(2, "0");
   const seconds = String(safe % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function formatHours(totalMinutes) {
+  const safe = Math.max(0, Math.round(totalMinutes || 0));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:00`;
+}
+
+function formatChartTotal(totalMinutes) {
+  const safe = Math.max(0, Math.round(totalMinutes || 0));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  if (!hours) return `${minutes}分`;
+  if (!minutes) return `${hours}時間`;
+  return `${hours}時間${minutes}分`;
+}
+
+function dateKeyFor(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function startOfWeek(date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  const day = next.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  next.setDate(next.getDate() + diff);
+  return next;
+}
+
+function buildWeeklyChart(sessions) {
+  const start = startOfWeek(new Date());
+  const labels = ["月", "火", "水", "木", "金", "土", "日"];
+  const days = labels.map((label, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return {
+      label,
+      date: dateKeyFor(date),
+      total: 0,
+      subjects: Object.fromEntries(SUBJECTS.map((subject) => [subject.id, 0])),
+    };
+  });
+  sessions.forEach((session) => {
+    const day = days.find((item) => item.date === session.date);
+    if (!day || !Object.prototype.hasOwnProperty.call(day.subjects, session.subject)) return;
+    const minutes = Math.max(0, Number(session.minutes || 0));
+    day.subjects[session.subject] += minutes;
+    day.total += minutes;
+  });
+  return days;
 }
 
 function displaySeconds(timer, nowTick) {
@@ -129,10 +239,19 @@ function rewardFor(minutes, mode) {
   return base + bonus;
 }
 
+function createAudioContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  return AudioContextClass ? new AudioContextClass() : null;
+}
+
 function App() {
   const [state, setState] = useState(loadState);
   const [tab, setTab] = useState("home");
   const [nowTick, setNowTick] = useState(Date.now());
+  const [soundPanelOpen, setSoundPanelOpen] = useState(false);
+  const audioContextRef = useRef(null);
+  const bgmNodesRef = useRef(null);
+  const previousSessionCountRef = useRef(state.sessions.length);
   const activeOutfit = OUTFITS.find((item) => item.id === state.selectedOutfitId) || OUTFITS[0];
   const selectedSubject = SUBJECTS.find((item) => item.id === state.selectedSubject) || SUBJECTS[0];
   const remainingOrElapsed = displaySeconds(state.timer, nowTick);
@@ -156,8 +275,96 @@ function App() {
     }
   }, [remainingOrElapsed, state.timer.mode, state.timer.running]);
 
-  function updateTimer(nextTimer) {
-    setState((current) => ({ ...current, timer: { ...current.timer, ...nextTimer } }));
+  useEffect(() => {
+    if (state.sound?.bgm && state.timer.running && tab === "timer") {
+      startBgm();
+    } else {
+      stopBgm();
+    }
+  }, [state.sound?.bgm, state.timer.running, tab]);
+
+  useEffect(() => {
+    if (state.sessions.length > previousSessionCountRef.current && state.sound?.alarm) {
+      playAlarm();
+    }
+    previousSessionCountRef.current = state.sessions.length;
+  }, [state.sessions.length, state.sound?.alarm]);
+
+  useEffect(() => () => stopBgm(), []);
+
+  function ensureAudioContext() {
+    if (!audioContextRef.current) {
+      audioContextRef.current = createAudioContext();
+    }
+    if (audioContextRef.current?.state === "suspended") {
+      audioContextRef.current.resume();
+    }
+    return audioContextRef.current;
+  }
+
+  function startBgm() {
+    const context = ensureAudioContext();
+    if (!context || bgmNodesRef.current) return;
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0.035, context.currentTime);
+    gain.connect(context.destination);
+    const notes = [261.63, 329.63, 392, 523.25];
+    const oscillators = notes.map((frequency, index) => {
+      const oscillator = context.createOscillator();
+      const noteGain = context.createGain();
+      oscillator.type = index % 2 ? "triangle" : "sine";
+      oscillator.frequency.value = frequency / (index > 1 ? 2 : 1);
+      noteGain.gain.value = index === 0 ? 0.44 : 0.18;
+      oscillator.connect(noteGain);
+      noteGain.connect(gain);
+      oscillator.start();
+      return oscillator;
+    });
+    bgmNodesRef.current = { gain, oscillators };
+  }
+
+  function stopBgm() {
+    const nodes = bgmNodesRef.current;
+    if (!nodes) return;
+    nodes.gain.gain.setTargetAtTime(0, audioContextRef.current.currentTime, 0.05);
+    window.setTimeout(() => {
+      nodes.oscillators.forEach((oscillator) => {
+        try {
+          oscillator.stop();
+        } catch {
+          // already stopped
+        }
+      });
+      nodes.gain.disconnect();
+    }, 120);
+    bgmNodesRef.current = null;
+  }
+
+  function playAlarm() {
+    const context = ensureAudioContext();
+    if (!context) return;
+    [0, 0.16, 0.34].forEach((offset, index) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = [784, 988, 1318][index];
+      gain.gain.setValueAtTime(0.0001, context.currentTime + offset);
+      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + offset + 0.22);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(context.currentTime + offset);
+      oscillator.stop(context.currentTime + offset + 0.24);
+    });
+  }
+
+  function updateSound(nextSound) {
+    setState((current) => ({ ...current, sound: { ...current.sound, ...nextSound } }));
+  }
+
+  function toggleSoundPanel() {
+    ensureAudioContext();
+    setSoundPanelOpen((open) => !open);
   }
 
   function changeMode(mode) {
@@ -273,6 +480,17 @@ function App() {
     });
   }
 
+  function updateChartSettings(nextSettings) {
+    setState((current) => ({
+      ...current,
+      chartSettings: normalizeChartSettings({
+        ...current.chartSettings,
+        ...nextSettings,
+        colors: { ...current.chartSettings?.colors, ...nextSettings.colors },
+      }),
+    }));
+  }
+
   return (
     <main className="stage">
       <div className="showcase" aria-label="たまの勉強タイマー">
@@ -303,9 +521,14 @@ function App() {
               resetTimer={resetTimer}
               completeSession={completeSession}
               setTab={setTab}
+              sound={state.sound}
+              soundPanelOpen={soundPanelOpen}
+              toggleSoundPanel={toggleSoundPanel}
+              updateSound={updateSound}
+              playAlarm={playAlarm}
             />
           )}
-          {tab === "records" && <RecordsScreen state={state} setTab={setTab} />}
+          {tab === "records" && <RecordsScreen state={state} setTab={setTab} updateChartSettings={updateChartSettings} />}
           {tab === "wardrobe" && (
             <WardrobeScreen
               state={state}
@@ -341,7 +564,7 @@ function Vines() {
   );
 }
 
-function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc }) {
+function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc, onSoundClick, soundEnabled }) {
   return (
     <header className="topbar">
       {onBack ? (
@@ -355,7 +578,11 @@ function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc 
       <div className="top-pills">
         {typeof points === "number" && <span><Sprout size={15} />{points.toLocaleString()} pt</span>}
         {typeof streak === "number" && <span>💧 {streak || 0}</span>}
-        {rightIcon === "music" && <button className="icon-button" type="button" aria-label="音"><Music2 size={18} /></button>}
+        {rightIcon === "music" && onSoundClick && (
+          <button className={`icon-button ${soundEnabled ? "active" : ""}`} type="button" aria-label="音" onClick={onSoundClick}>
+            <Music2 size={18} />
+          </button>
+        )}
       </div>
     </header>
   );
@@ -364,7 +591,7 @@ function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc 
 function HomeScreen({ state, outfit, subject, progress, setTab, startTimer, setSubject }) {
   return (
     <div className="screen home-screen">
-      <TopBar title="たまの勉強タイマー" points={state.points} streak={state.streak} avatarSrc={asset("crops/protagonist.png")} />
+      <TopBar title="たまの勉強タイマー" points={state.points} streak={state.streak} avatarSrc={asset(`avatar/full/${outfit.id}.png`)} />
       <section className="hero-card">
         <div className="hero-copy">
           <span>今日の勉強時間</span>
@@ -433,11 +660,49 @@ function TimerScreen({
   resetTimer,
   completeSession,
   setTab,
+  sound,
+  soundPanelOpen,
+  toggleSoundPanel,
+  updateSound,
+  playAlarm,
 }) {
   const isRunning = state.timer.running;
   return (
     <div className="screen timer-screen">
-      <TopBar title="勉強中..." onBack={() => setTab("home")} rightIcon="music" />
+      <header className="timer-header">
+        <button className="icon-button" type="button" onClick={() => setTab("home")} aria-label="戻る">
+          <ChevronLeft size={20} />
+        </button>
+        <button className="task-pill top-task-pill" type="button">
+          <img src={asset(`crops/${subject.icon}`)} alt="" />
+          <span>{subject.label}の勉強をする</span>
+          <Pencil size={16} />
+        </button>
+        <button className={`icon-button ${sound?.bgm || sound?.alarm ? "active" : ""}`} type="button" aria-label="音" onClick={toggleSoundPanel}>
+          <Music2 size={18} />
+        </button>
+      </header>
+      {soundPanelOpen && (
+        <section className="sound-panel">
+          <label>
+            <input
+              type="checkbox"
+              checked={Boolean(sound?.bgm)}
+              onChange={(event) => updateSound({ bgm: event.target.checked })}
+            />
+            勉強用BGM
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={Boolean(sound?.alarm)}
+              onChange={(event) => updateSound({ alarm: event.target.checked })}
+            />
+            完了アラーム
+          </label>
+          <button type="button" onClick={playAlarm}>試す</button>
+        </section>
+      )}
       <div className="mode-switch">
         <button type="button" className={state.timer.mode === "focus" ? "active" : ""} onClick={() => changeMode("focus")}>集中</button>
         <button type="button" className={state.timer.mode === "free" ? "active" : ""} onClick={() => changeMode("free")}>自由計測</button>
@@ -456,18 +721,13 @@ function TimerScreen({
           ))}
         </div>
       )}
-      <div className="task-pill">
-        <img src={asset(`crops/${subject.icon}`)} alt="" />
-        <span>{subject.label}の勉強をする</span>
-        <Pencil size={16} />
-      </div>
       <section className="focus-scene">
         <div className="timer-wreath" style={{ "--progress": `${Math.round(progress * 360)}deg` }}>
           <span>{formatTime(displayValue)}</span>
           <small>{state.timer.mode === "focus" ? "残り時間" : "経過時間"}</small>
         </div>
         <img className="desk-bg" src={asset("crops/home-bg.png")} alt="" />
-        <img className="study-character" src={asset(`avatar/full/${outfit.id}.png`)} alt="勉強中のたま" />
+        <img className="study-character" src={asset(studyImageFor(outfit.id))} alt={`${outfit.name}で勉強するたま`} />
       </section>
       <div className="timer-actions">
         {!isRunning ? (
@@ -487,8 +747,38 @@ function TimerScreen({
   );
 }
 
-function RecordsScreen({ state, setTab }) {
+function RecordsScreen({ state, setTab, updateChartSettings }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [selectedSubjectId, setSelectedSubjectId] = useState(state.chartSettings.visibleSubjects[0] || SUBJECTS[0].id);
   const totalToday = state.sessions.filter((session) => session.date === todayKey()).reduce((sum, session) => sum + session.minutes, 0);
+  const weekDays = buildWeeklyChart(state.sessions);
+  const visibleSubjects = SUBJECTS.filter((subject) => state.chartSettings.visibleSubjects.includes(subject.id));
+  const visibleTotals = weekDays.map((day) => visibleSubjects.reduce((sum, subject) => sum + day.subjects[subject.id], 0));
+  const maxDayTotal = Math.max(60, ...visibleTotals);
+  const weekTotal = visibleTotals.reduce((sum, minutes) => sum + minutes, 0);
+
+  function toggleChartSubject(subjectId) {
+    const current = state.chartSettings.visibleSubjects;
+    const next = current.includes(subjectId)
+      ? current.filter((id) => id !== subjectId)
+      : [...current, subjectId];
+    updateChartSettings({ visibleSubjects: next.length ? next : [subjectId] });
+    setSelectedSubjectId(subjectId);
+  }
+
+  function setChartColor(subjectId, color) {
+    updateChartSettings({ colors: { [subjectId]: color } });
+    setSelectedSubjectId(subjectId);
+  }
+
+  function resetChartSettings() {
+    updateChartSettings({
+      visibleSubjects: SUBJECTS.map((subject) => subject.id),
+      colors: DEFAULT_CHART_COLORS,
+    });
+    setSelectedSubjectId(SUBJECTS[0].id);
+  }
+
   return (
     <div className="screen record-screen">
       <TopBar title="記録" points={state.points} onBack={() => setTab("home")} />
@@ -497,6 +787,127 @@ function RecordsScreen({ state, setTab }) {
         <div><span>累計</span><b>{state.totalMinutes}<small>分</small></b></div>
         <div><span>ポイント</span><b>{state.points}<small>pt</small></b></div>
       </section>
+      <section className="weekly-chart-card">
+        <div className="chart-head">
+          <div>
+            <span><BookOpen size={16} />今週の勉強時間</span>
+            <b>{formatChartTotal(weekTotal)}</b>
+          </div>
+          <button className="chart-settings-button" type="button" onClick={() => setSettingsOpen(true)}>
+            <SlidersHorizontal size={15} />
+            表示設定
+          </button>
+        </div>
+        <div className="weekly-chart" aria-label="1週間分の勉強時間">
+          <div className="chart-grid-lines" aria-hidden="true">
+            <span>2h</span>
+            <span>1h</span>
+            <span>0</span>
+          </div>
+          <div className="chart-bars">
+            {weekDays.map((day) => {
+              const dayTotal = visibleSubjects.reduce((sum, subject) => sum + day.subjects[subject.id], 0);
+              return (
+                <div className="chart-day" key={day.date}>
+                  <div className="chart-bar-track">
+                    <div className="chart-stack" style={{ height: `${Math.max(dayTotal ? 8 : 0, (dayTotal / maxDayTotal) * 100)}%` }}>
+                      {visibleSubjects.map((subject) => {
+                        const minutes = day.subjects[subject.id];
+                        if (!minutes) return null;
+                        return (
+                          <span
+                            key={subject.id}
+                            className="chart-segment"
+                            style={{
+                              "--segment-color": state.chartSettings.colors[subject.id],
+                              flexGrow: minutes,
+                            }}
+                            title={`${subject.label} ${minutes}分`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <span>{day.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="chart-legend">
+          {visibleSubjects.map((subject) => (
+            <span key={subject.id}>
+              <i style={{ background: state.chartSettings.colors[subject.id] }} />
+              {subject.label}
+            </span>
+          ))}
+        </div>
+      </section>
+      {settingsOpen && (
+        <div className="chart-settings-overlay" role="dialog" aria-modal="true" aria-label="表示設定">
+          <button className="settings-scrim" type="button" aria-label="閉じる" onClick={() => setSettingsOpen(false)} />
+          <section className="chart-settings-sheet">
+            <div className="sheet-head">
+              <div>
+                <span><Palette size={16} />表示設定</span>
+                <small>表示する教科と色を選べます</small>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setSettingsOpen(false)} aria-label="閉じる">
+                <Check size={18} />
+              </button>
+            </div>
+            <div className="subject-settings-list">
+              {SUBJECTS.map((subject) => {
+                const checked = state.chartSettings.visibleSubjects.includes(subject.id);
+                const active = selectedSubjectId === subject.id;
+                return (
+                  <button
+                    className={`subject-setting-row ${active ? "active" : ""}`}
+                    type="button"
+                    key={subject.id}
+                    onClick={() => setSelectedSubjectId(subject.id)}
+                  >
+                    <span className={`setting-check ${checked ? "checked" : ""}`} onClick={(event) => {
+                      event.stopPropagation();
+                      toggleChartSubject(subject.id);
+                    }}>
+                      {checked && <Check size={13} />}
+                    </span>
+                    <img src={asset(`crops/${subject.icon}`)} alt="" />
+                    <strong>{subject.label}</strong>
+                    <span className="color-chip" style={{ background: state.chartSettings.colors[subject.id] }} />
+                  </button>
+                );
+              })}
+            </div>
+            <div className="color-palette">
+              {CHART_COLOR_SWATCHES.map((color) => (
+                <button
+                  key={color}
+                  className={state.chartSettings.colors[selectedSubjectId] === color ? "active" : ""}
+                  type="button"
+                  style={{ "--swatch-color": color }}
+                  aria-label={`${color}にする`}
+                  onClick={() => setChartColor(selectedSubjectId, color)}
+                />
+              ))}
+              <label className="custom-color">
+                <span>自由</span>
+                <input
+                  type="color"
+                  value={state.chartSettings.colors[selectedSubjectId]}
+                  onChange={(event) => setChartColor(selectedSubjectId, event.target.value)}
+                  aria-label="好きな色を選ぶ"
+                />
+              </label>
+            </div>
+            <div className="sheet-actions">
+              <button type="button" onClick={resetChartSettings}>リセット</button>
+              <button className="primary" type="button" onClick={() => setSettingsOpen(false)}>保存</button>
+            </div>
+          </section>
+        </div>
+      )}
       <div className="history-list">
         {state.sessions.length === 0 ? (
           <p className="empty">まだ記録はありません。最初の1回を気軽にはじめよう。</p>
@@ -538,10 +949,12 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
               key={outfit.id}
               onClick={() => unlockOrSelect(outfit)}
             >
-              <span className="zoom">⌕</span>
+              <span className="zoom" aria-hidden="true">⌕</span>
               <img src={asset(`crops/${outfit.id}.png`)} alt="" />
               <strong>{outfit.name}</strong>
-              <small>{unlocked ? (selected ? "着用中" : "着る") : canBuy ? "解放する" : `${outfit.cost} pt`}</small>
+              <small>
+                {unlocked ? (selected ? "着用中" : "着る") : canBuy ? "購入する" : `${outfit.cost} pt`}
+              </small>
             </button>
           );
         })}
@@ -567,12 +980,6 @@ function BottomNav({ active, setTab }) {
       ))}
     </nav>
   );
-}
-
-function formatHours(minutes) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
 }
 
 function resetLocal() {
