@@ -24,6 +24,7 @@ import {
 import "./styles.css";
 
 const STORAGE_KEY = "tama-study-timer-state-v1";
+const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 15, 25, 45, 60];
 const STUDY_BGM_SRC = asset("audio/study-bgm.mp3");
 const DEFAULT_SUBJECTS = [
@@ -81,7 +82,7 @@ function asset(path) {
 }
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  return dateKeyFor(new Date());
 }
 
 function isHexColor(value) {
@@ -168,7 +169,7 @@ function normalizeState(raw) {
     selectedSubject: subjects.some((item) => item.id === raw.selectedSubject) ? raw.selectedSubject : subjects[0].id,
     selectedOutfitId,
     unlockedOutfits: unlocked,
-    sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, 40) : [],
+    sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, MAX_STORED_SESSIONS) : [],
     timer: { ...base.timer, ...(raw.timer || {}) },
     sound: { ...base.sound, ...(raw.sound || {}) },
     chartSettings: normalizeChartSettings(raw.chartSettings, subjects, base.chartSettings),
@@ -226,7 +227,14 @@ function formatChartTotal(totalMinutes) {
 }
 
 function dateKeyFor(date) {
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatMonthDay(date) {
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function startOfWeek(date) {
@@ -238,8 +246,25 @@ function startOfWeek(date) {
   return next;
 }
 
-function buildWeeklyChart(sessions, subjects) {
-  const start = startOfWeek(new Date());
+function addWeeks(date, amount) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount * 7);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function sameDateKey(left, right) {
+  return dateKeyFor(left) === dateKeyFor(right);
+}
+
+function formatWeekRange(weekStart) {
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  return `${formatMonthDay(weekStart)} - ${formatMonthDay(weekEnd)}`;
+}
+
+function buildWeeklyChart(sessions, subjects, weekStart) {
+  const start = startOfWeek(weekStart);
   const labels = ["月", "火", "水", "木", "金", "土", "日"];
   const days = labels.map((label, index) => {
     const date = new Date(start);
@@ -247,6 +272,7 @@ function buildWeeklyChart(sessions, subjects) {
     return {
       label,
       date: dateKeyFor(date),
+      dateLabel: formatMonthDay(date),
       total: 0,
       subjects: Object.fromEntries(subjects.map((subject) => [subject.id, 0])),
     };
@@ -476,7 +502,7 @@ function App() {
         todayMinutes: current.todayMinutes + minutes,
         totalMinutes: current.totalMinutes + minutes,
         streak: current.todayMinutes ? current.streak || 1 : Math.max(1, current.streak || 0),
-        sessions: [session, ...current.sessions].slice(0, 40),
+        sessions: [session, ...current.sessions].slice(0, MAX_STORED_SESSIONS),
         timer: {
           ...current.timer,
           running: false,
@@ -904,13 +930,16 @@ function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject,
 function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [selectedSubjectId, setSelectedSubjectId] = useState(state.chartSettings.visibleSubjects[0] || subjects[0].id);
+  const [visibleWeekStart, setVisibleWeekStart] = useState(() => startOfWeek(new Date()));
   useEffect(() => {
     if (!subjects.some((subject) => subject.id === selectedSubjectId)) {
       setSelectedSubjectId(subjects[0].id);
     }
   }, [subjects, selectedSubjectId]);
   const totalToday = state.sessions.filter((session) => session.date === todayKey()).reduce((sum, session) => sum + session.minutes, 0);
-  const weekDays = buildWeeklyChart(state.sessions, subjects);
+  const currentWeekStart = startOfWeek(new Date());
+  const isCurrentWeek = sameDateKey(visibleWeekStart, currentWeekStart);
+  const weekDays = buildWeeklyChart(state.sessions, subjects, visibleWeekStart);
   const visibleSubjects = subjects.filter((subject) => state.chartSettings.visibleSubjects.includes(subject.id));
   const visibleTotals = weekDays.map((day) => visibleSubjects.reduce((sum, subject) => sum + day.subjects[subject.id], 0));
   const maxDayTotal = Math.max(60, ...visibleTotals);
@@ -939,6 +968,13 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
     setSelectedSubjectId(subjects[0].id);
   }
 
+  function moveWeek(amount) {
+    setVisibleWeekStart((current) => {
+      const next = addWeeks(current, amount);
+      return next > currentWeekStart ? currentWeekStart : next;
+    });
+  }
+
   return (
     <div className="screen record-screen">
       <TopBar title="記録" points={state.points} onBack={() => setTab("home")} />
@@ -951,12 +987,18 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
         <div className="chart-head">
           <div>
             <span><BookOpen size={16} />今週の勉強時間</span>
+            <small>{formatWeekRange(visibleWeekStart)}</small>
             <b>{formatChartTotal(weekTotal)}</b>
           </div>
           <button className="chart-settings-button" type="button" onClick={() => setSettingsOpen(true)}>
             <SlidersHorizontal size={15} />
             表示設定
           </button>
+        </div>
+        <div className="week-nav" aria-label="表示する週">
+          <button type="button" onClick={() => moveWeek(-1)}>前の週</button>
+          <button type="button" onClick={() => setVisibleWeekStart(currentWeekStart)} disabled={isCurrentWeek}>今週</button>
+          <button type="button" onClick={() => moveWeek(1)} disabled={isCurrentWeek}>次の週</button>
         </div>
         <div className="weekly-chart" aria-label="1週間分の勉強時間">
           <div className="chart-grid-lines" aria-hidden="true">
@@ -988,7 +1030,10 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
                       })}
                     </div>
                   </div>
-                  <span>{day.label}</span>
+                  <span className="chart-day-label">
+                    <b>{day.label}</b>
+                    <small>{day.dateLabel}</small>
+                  </span>
                 </div>
               );
             })}

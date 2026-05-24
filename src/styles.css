@@ -846,6 +846,12 @@ button:disabled {
   font-weight: 950;
 }
 
+.chart-head small {
+  color: #967e63;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
 .chart-settings-button {
   display: inline-flex;
   align-items: center;
@@ -860,15 +866,39 @@ button:disabled {
   white-space: nowrap;
 }
 
+.week-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(235, 218, 190, 0.48);
+}
+
+.week-nav button {
+  min-height: 32px;
+  border-radius: 999px;
+  background: rgba(255, 250, 238, 0.78);
+  color: #725a42;
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.week-nav button:disabled {
+  color: #fff;
+  background: linear-gradient(180deg, #8da76f, #6b854f);
+  opacity: 1;
+}
+
 .weekly-chart {
   position: relative;
-  min-height: 176px;
+  min-height: 188px;
   padding: 12px 0 0 28px;
 }
 
 .chart-grid-lines {
   position: absolute;
-  inset: 12px 0 20px 0;
+  inset: 12px 0 34px 0;
   display: grid;
   grid-template-rows: repeat(3, 1fr);
   color: #a58a6b;
@@ -898,7 +928,7 @@ button:disabled {
   grid-template-columns: repeat(7, minmax(0, 1fr));
   align-items: end;
   gap: 7px;
-  height: 164px;
+  height: 176px;
 }
 
 .chart-day {
@@ -912,6 +942,22 @@ button:disabled {
   font-size: 0.7rem;
   font-weight: 950;
   text-align: center;
+}
+
+.chart-day-label {
+  display: grid;
+  gap: 1px;
+  line-height: 1.1;
+}
+
+.chart-day-label b {
+  font-size: 0.7rem;
+}
+
+.chart-day-label small {
+  color: #a58a6b;
+  font-size: 0.58rem;
+  font-weight: 900;
 }
 
 .chart-bar-track {
