@@ -1190,12 +1190,7 @@ button:disabled {
 }
 
 .vine {
-  position: absolute;
-  z-index: 1;
-  width: 90px;
-  height: 180px;
-  pointer-events: none;
-  opacity: 0.55;
+  display: none;
 }
 
 .vine::before,
