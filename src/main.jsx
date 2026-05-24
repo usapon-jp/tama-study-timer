@@ -1186,6 +1186,7 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
 
 function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
   const [purchaseOutfit, setPurchaseOutfit] = useState(null);
+  const [previewOutfit, setPreviewOutfit] = useState(null);
   const purchaseUnlocked = purchaseOutfit ? state.unlockedOutfits.includes(purchaseOutfit.id) : false;
   const purchaseCanBuy = purchaseOutfit ? state.points >= purchaseOutfit.cost : false;
 
@@ -1222,7 +1223,25 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
               key={outfit.id}
               onClick={() => handleOutfitTap(outfit)}
             >
-              <span className="zoom" aria-hidden="true">⌕</span>
+              <span
+                className="zoom"
+                role="button"
+                tabIndex={0}
+                aria-label={`${outfit.name}を大きく表示`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPreviewOutfit(outfit);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPreviewOutfit(outfit);
+                  }
+                }}
+              >
+                ⌕
+              </span>
               <img src={asset(`crops/${outfit.id}.png`)} alt="" />
               <strong>{outfit.name}</strong>
               <small>
@@ -1248,6 +1267,18 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
                 購入する
               </button>
             </div>
+          </section>
+        </div>
+      )}
+      {previewOutfit && (
+        <div className="outfit-preview-overlay" role="dialog" aria-modal="true" aria-label={`${previewOutfit.name}の拡大表示`}>
+          <button className="preview-scrim" type="button" aria-label="閉じる" onClick={() => setPreviewOutfit(null)} />
+          <section className="outfit-preview-dialog">
+            <button className="icon-button preview-close" type="button" aria-label="閉じる" onClick={() => setPreviewOutfit(null)}>
+              ×
+            </button>
+            <img src={asset(`crops/${previewOutfit.id}.png`)} alt={previewOutfit.name} />
+            <strong>{previewOutfit.name}</strong>
           </section>
         </div>
       )}
