@@ -12,11 +12,13 @@ import {
   Music2,
   Palette,
   Pencil,
+  Plus,
   RotateCcw,
   Settings,
   SlidersHorizontal,
   ShoppingBag,
   Sprout,
+  Trash2,
   Trophy,
 } from "lucide-react";
 import "./styles.css";
@@ -24,13 +26,13 @@ import "./styles.css";
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const FOCUS_PRESETS = [5, 15, 25, 45, 60];
 const STUDY_BGM_SRC = asset("audio/study-bgm.mp3");
-const SUBJECTS = [
-  { id: "math", label: "数学", icon: "quest-math.png" },
-  { id: "english", label: "英語", icon: "quest-english.png" },
-  { id: "science", label: "理科", icon: "quest-science.png" },
-  { id: "social", label: "社会", icon: "quest-social.png" },
-  { id: "japanese", label: "国語", icon: "quest-japanese.png" },
-  { id: "free", label: "フリー", icon: "nav-quest.png" },
+const DEFAULT_SUBJECTS = [
+  { id: "math", label: "数学", icon: "quest-math.png", color: "#7f985e" },
+  { id: "english", label: "英語", icon: "quest-english.png", color: "#7aa6bd" },
+  { id: "science", label: "理科", icon: "quest-science.png", color: "#d8b85a" },
+  { id: "social", label: "社会", icon: "quest-social.png", color: "#c98766" },
+  { id: "japanese", label: "国語", icon: "quest-japanese.png", color: "#d78b9f" },
+  { id: "free", label: "フリー", icon: "nav-quest.png", color: "#9aa897" },
 ];
 const DEFAULT_CHART_COLORS = {
   math: "#7f985e",
@@ -82,6 +84,10 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function isHexColor(value) {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+
 function defaultState() {
   return {
     points: 0,
@@ -90,6 +96,7 @@ function defaultState() {
     today: todayKey(),
     streak: 0,
     selectedSubject: "math",
+    subjects: DEFAULT_SUBJECTS,
     selectedOutfitId: "outfit-n-1",
     unlockedOutfits: ["outfit-n-1"],
     sessions: [],
@@ -106,10 +113,39 @@ function defaultState() {
       alarm: true,
     },
     chartSettings: {
-      visibleSubjects: SUBJECTS.map((subject) => subject.id),
+      visibleSubjects: DEFAULT_SUBJECTS.map((subject) => subject.id),
       colors: DEFAULT_CHART_COLORS,
     },
   };
+}
+
+function normalizeSubjects(rawSubjects) {
+  if (!Array.isArray(rawSubjects) || rawSubjects.length === 0) {
+    return DEFAULT_SUBJECTS;
+  }
+  const seen = new Set();
+  const subjects = rawSubjects
+    .map((subject, index) => {
+      const defaultSubject = DEFAULT_SUBJECTS.find((item) => item.id === subject?.id);
+      const id = typeof subject?.id === "string" && subject.id.trim()
+        ? subject.id.trim().replace(/[^a-zA-Z0-9_-]/g, "-")
+        : `custom-${Date.now()}-${index}`;
+      if (seen.has(id)) return null;
+      seen.add(id);
+      const label = typeof subject?.label === "string" && subject.label.trim()
+        ? subject.label.trim().slice(0, 12)
+        : defaultSubject?.label || `項目${index + 1}`;
+      const icon = typeof subject?.icon === "string" && subject.icon.trim()
+        ? subject.icon
+        : defaultSubject?.icon || "nav-quest.png";
+      const color = isHexColor(subject?.color)
+        ? subject.color
+        : defaultSubject?.color || CHART_COLOR_SWATCHES[index % CHART_COLOR_SWATCHES.length];
+      return { id, label, icon, color };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+  return subjects.length ? subjects : DEFAULT_SUBJECTS;
 }
 
 function normalizeState(raw) {
@@ -117,6 +153,7 @@ function normalizeState(raw) {
   if (!raw || typeof raw !== "object") return base;
   const today = todayKey();
   const sameDay = raw.today === today;
+  const subjects = normalizeSubjects(raw.subjects);
   const unlocked = Array.isArray(raw.unlockedOutfits) && raw.unlockedOutfits.length ? raw.unlockedOutfits : base.unlockedOutfits;
   const selectedOutfitId = unlocked.includes(raw.selectedOutfitId) ? raw.selectedOutfitId : unlocked[0] || "outfit-n-1";
   return {
@@ -127,31 +164,32 @@ function normalizeState(raw) {
     points: Math.max(0, Number(raw.points || 0)),
     totalMinutes: Math.max(0, Number(raw.totalMinutes || 0)),
     streak: Number(raw.streak || 0),
-    selectedSubject: SUBJECTS.some((item) => item.id === raw.selectedSubject) ? raw.selectedSubject : "math",
+    subjects,
+    selectedSubject: subjects.some((item) => item.id === raw.selectedSubject) ? raw.selectedSubject : subjects[0].id,
     selectedOutfitId,
     unlockedOutfits: unlocked,
     sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, 40) : [],
     timer: { ...base.timer, ...(raw.timer || {}) },
     sound: { ...base.sound, ...(raw.sound || {}) },
-    chartSettings: normalizeChartSettings(raw.chartSettings, base.chartSettings),
+    chartSettings: normalizeChartSettings(raw.chartSettings, subjects, base.chartSettings),
   };
 }
 
-function normalizeChartSettings(settings, baseSettings = defaultState().chartSettings) {
+function normalizeChartSettings(settings, subjects = DEFAULT_SUBJECTS, baseSettings = defaultState().chartSettings) {
   const visible = Array.isArray(settings?.visibleSubjects)
-    ? settings.visibleSubjects.filter((id) => SUBJECTS.some((subject) => subject.id === id))
-    : baseSettings.visibleSubjects;
-  const colors = { ...baseSettings.colors };
+    ? settings.visibleSubjects.filter((id) => subjects.some((subject) => subject.id === id))
+    : baseSettings.visibleSubjects.filter((id) => subjects.some((subject) => subject.id === id));
+  const colors = Object.fromEntries(subjects.map((subject) => [subject.id, subject.color]));
   if (settings?.colors && typeof settings.colors === "object") {
-    SUBJECTS.forEach((subject) => {
+    subjects.forEach((subject) => {
       const color = settings.colors[subject.id];
-      if (typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color)) {
+      if (isHexColor(color)) {
         colors[subject.id] = color;
       }
     });
   }
   return {
-    visibleSubjects: visible.length ? visible : [SUBJECTS[0].id],
+    visibleSubjects: visible.length ? visible : [subjects[0].id],
     colors,
   };
 }
@@ -200,7 +238,7 @@ function startOfWeek(date) {
   return next;
 }
 
-function buildWeeklyChart(sessions) {
+function buildWeeklyChart(sessions, subjects) {
   const start = startOfWeek(new Date());
   const labels = ["月", "火", "水", "木", "金", "土", "日"];
   const days = labels.map((label, index) => {
@@ -210,7 +248,7 @@ function buildWeeklyChart(sessions) {
       label,
       date: dateKeyFor(date),
       total: 0,
-      subjects: Object.fromEntries(SUBJECTS.map((subject) => [subject.id, 0])),
+      subjects: Object.fromEntries(subjects.map((subject) => [subject.id, 0])),
     };
   });
   sessions.forEach((session) => {
@@ -255,7 +293,8 @@ function App() {
   const bgmAudioRef = useRef(null);
   const previousSessionCountRef = useRef(state.sessions.length);
   const activeOutfit = OUTFITS.find((item) => item.id === state.selectedOutfitId) || OUTFITS[0];
-  const selectedSubject = SUBJECTS.find((item) => item.id === state.selectedSubject) || SUBJECTS[0];
+  const subjects = state.subjects?.length ? state.subjects : DEFAULT_SUBJECTS;
+  const selectedSubject = subjects.find((item) => item.id === state.selectedSubject) || subjects[0];
   const remainingOrElapsed = displaySeconds(state.timer, nowTick);
   const spentSeconds = elapsedSeconds(state.timer, nowTick);
   const progress = state.timer.mode === "focus"
@@ -471,8 +510,69 @@ function App() {
         ...current.chartSettings,
         ...nextSettings,
         colors: { ...current.chartSettings?.colors, ...nextSettings.colors },
-      }),
+      }, current.subjects || DEFAULT_SUBJECTS),
     }));
+  }
+
+  function updateSubject(subjectId, changes) {
+    setState((current) => {
+      const subjects = normalizeSubjects(current.subjects).map((subject) => (
+        subject.id === subjectId ? { ...subject, ...changes } : subject
+      ));
+      const chartSettings = normalizeChartSettings({
+        ...current.chartSettings,
+        colors: {
+          ...current.chartSettings?.colors,
+          ...(changes.color ? { [subjectId]: changes.color } : {}),
+        },
+      }, subjects);
+      return { ...current, subjects, chartSettings };
+    });
+  }
+
+  function addSubject() {
+    setState((current) => {
+      const subjects = normalizeSubjects(current.subjects);
+      if (subjects.length >= 12) return current;
+      const nextIndex = subjects.length + 1;
+      const color = CHART_COLOR_SWATCHES[subjects.length % CHART_COLOR_SWATCHES.length];
+      const subject = {
+        id: `custom-${Date.now()}`,
+        label: `項目${nextIndex}`,
+        icon: "nav-quest.png",
+        color,
+      };
+      const nextSubjects = [...subjects, subject];
+      return {
+        ...current,
+        subjects: nextSubjects,
+        selectedSubject: subject.id,
+        chartSettings: normalizeChartSettings({
+          ...current.chartSettings,
+          visibleSubjects: [...(current.chartSettings?.visibleSubjects || []), subject.id],
+          colors: { ...current.chartSettings?.colors, [subject.id]: color },
+        }, nextSubjects),
+      };
+    });
+  }
+
+  function deleteSubject(subjectId) {
+    setState((current) => {
+      const subjects = normalizeSubjects(current.subjects);
+      if (subjects.length <= 1) return current;
+      const nextSubjects = subjects.filter((subject) => subject.id !== subjectId);
+      if (nextSubjects.length === subjects.length) return current;
+      const selectedSubject = current.selectedSubject === subjectId ? nextSubjects[0].id : current.selectedSubject;
+      return {
+        ...current,
+        subjects: nextSubjects,
+        selectedSubject,
+        chartSettings: normalizeChartSettings({
+          ...current.chartSettings,
+          visibleSubjects: (current.chartSettings?.visibleSubjects || []).filter((id) => id !== subjectId),
+        }, nextSubjects),
+      };
+    });
   }
 
   return (
@@ -482,6 +582,7 @@ function App() {
           {tab === "home" && (
             <HomeScreen
               state={state}
+              subjects={subjects}
               outfit={activeOutfit}
               subject={selectedSubject}
               progress={progress}
@@ -512,7 +613,17 @@ function App() {
               playAlarm={playAlarm}
             />
           )}
-          {tab === "records" && <RecordsScreen state={state} setTab={setTab} updateChartSettings={updateChartSettings} />}
+          {tab === "records" && <RecordsScreen state={state} subjects={subjects} setTab={setTab} updateChartSettings={updateChartSettings} />}
+          {tab === "subjects" && (
+            <SubjectEditScreen
+              state={state}
+              subjects={subjects}
+              setTab={setTab}
+              updateSubject={updateSubject}
+              addSubject={addSubject}
+              deleteSubject={deleteSubject}
+            />
+          )}
           {tab === "wardrobe" && (
             <WardrobeScreen
               state={state}
@@ -571,7 +682,7 @@ function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSound
   );
 }
 
-function HomeScreen({ state, outfit, subject, progress, setTab, startTimer, setSubject }) {
+function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startTimer, setSubject }) {
   return (
     <div className="screen home-screen">
       <TopBar title="たまの勉強タイマー" points={state.points} avatarSrc={asset(`avatar/full/${outfit.id}.png`)} />
@@ -589,14 +700,15 @@ function HomeScreen({ state, outfit, subject, progress, setTab, startTimer, setS
       <section className="subject-card">
         <div className="section-head">
           <b>今日やること</b>
-          <button type="button" onClick={() => setTab("timer")}><Pencil size={15} />タイマー調整</button>
+          <button type="button" onClick={() => setTab("subjects")}><Pencil size={15} />項目編集</button>
         </div>
         <div className="subject-row">
-          {SUBJECTS.map((item) => (
+          {subjects.map((item) => (
             <button
               key={item.id}
               type="button"
               className={state.selectedSubject === item.id ? "active" : ""}
+              style={{ "--subject-color": item.color }}
               onClick={() => setSubject(item.id)}
             >
               <img src={asset(`crops/${item.icon}`)} alt="" />
@@ -730,15 +842,80 @@ function TimerScreen({
   );
 }
 
-function RecordsScreen({ state, setTab, updateChartSettings }) {
+function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject, deleteSubject }) {
+  return (
+    <div className="screen subject-edit-screen">
+      <TopBar title="項目編集" points={state.points} onBack={() => setTab("home")} />
+      <section className="subject-editor-card">
+        <div className="editor-head">
+          <div>
+            <b>今日やること</b>
+            <small>名前と色を変えられます</small>
+          </div>
+          <button type="button" onClick={addSubject} disabled={subjects.length >= 12}>
+            <Plus size={16} />
+            追加
+          </button>
+        </div>
+        <div className="subject-edit-list">
+          {subjects.map((subject) => (
+            <article className="subject-edit-row" key={subject.id}>
+              <img src={asset(`crops/${subject.icon}`)} alt="" />
+              <label>
+                <span>項目名</span>
+                <input
+                  type="text"
+                  value={subject.label}
+                  maxLength={12}
+                  onChange={(event) => updateSubject(subject.id, { label: event.target.value })}
+                  aria-label={`${subject.label}の名前`}
+                />
+              </label>
+              <label className="subject-color-field" style={{ "--subject-color": subject.color }}>
+                <span>色</span>
+                <input
+                  type="color"
+                  value={subject.color}
+                  onChange={(event) => updateSubject(subject.id, { color: event.target.value })}
+                  aria-label={`${subject.label}の色`}
+                />
+              </label>
+              <button
+                className="delete-subject-button"
+                type="button"
+                onClick={() => deleteSubject(subject.id)}
+                disabled={subjects.length <= 1}
+                aria-label={`${subject.label}を削除`}
+              >
+                <Trash2 size={17} />
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+      <button className="start-button compact" type="button" onClick={() => setTab("home")}>
+        <Check size={20} />
+        完了
+      </button>
+    </div>
+  );
+}
+
+function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedSubjectId, setSelectedSubjectId] = useState(state.chartSettings.visibleSubjects[0] || SUBJECTS[0].id);
+  const [selectedSubjectId, setSelectedSubjectId] = useState(state.chartSettings.visibleSubjects[0] || subjects[0].id);
+  useEffect(() => {
+    if (!subjects.some((subject) => subject.id === selectedSubjectId)) {
+      setSelectedSubjectId(subjects[0].id);
+    }
+  }, [subjects, selectedSubjectId]);
   const totalToday = state.sessions.filter((session) => session.date === todayKey()).reduce((sum, session) => sum + session.minutes, 0);
-  const weekDays = buildWeeklyChart(state.sessions);
-  const visibleSubjects = SUBJECTS.filter((subject) => state.chartSettings.visibleSubjects.includes(subject.id));
+  const weekDays = buildWeeklyChart(state.sessions, subjects);
+  const visibleSubjects = subjects.filter((subject) => state.chartSettings.visibleSubjects.includes(subject.id));
   const visibleTotals = weekDays.map((day) => visibleSubjects.reduce((sum, subject) => sum + day.subjects[subject.id], 0));
   const maxDayTotal = Math.max(60, ...visibleTotals);
   const weekTotal = visibleTotals.reduce((sum, minutes) => sum + minutes, 0);
+  const selectedColor = state.chartSettings.colors[selectedSubjectId] || subjects[0].color;
 
   function toggleChartSubject(subjectId) {
     const current = state.chartSettings.visibleSubjects;
@@ -756,10 +933,10 @@ function RecordsScreen({ state, setTab, updateChartSettings }) {
 
   function resetChartSettings() {
     updateChartSettings({
-      visibleSubjects: SUBJECTS.map((subject) => subject.id),
-      colors: DEFAULT_CHART_COLORS,
+      visibleSubjects: subjects.map((subject) => subject.id),
+      colors: Object.fromEntries(subjects.map((subject) => [subject.id, subject.color])),
     });
-    setSelectedSubjectId(SUBJECTS[0].id);
+    setSelectedSubjectId(subjects[0].id);
   }
 
   return (
@@ -840,7 +1017,7 @@ function RecordsScreen({ state, setTab, updateChartSettings }) {
               </button>
             </div>
             <div className="subject-settings-list">
-              {SUBJECTS.map((subject) => {
+              {subjects.map((subject) => {
                 const checked = state.chartSettings.visibleSubjects.includes(subject.id);
                 const active = selectedSubjectId === subject.id;
                 return (
@@ -867,7 +1044,7 @@ function RecordsScreen({ state, setTab, updateChartSettings }) {
               {CHART_COLOR_SWATCHES.map((color) => (
                 <button
                   key={color}
-                  className={state.chartSettings.colors[selectedSubjectId] === color ? "active" : ""}
+                  className={selectedColor === color ? "active" : ""}
                   type="button"
                   style={{ "--swatch-color": color }}
                   aria-label={`${color}にする`}
@@ -878,7 +1055,7 @@ function RecordsScreen({ state, setTab, updateChartSettings }) {
                 <span>自由</span>
                 <input
                   type="color"
-                  value={state.chartSettings.colors[selectedSubjectId]}
+                  value={selectedColor}
                   onChange={(event) => setChartColor(selectedSubjectId, event.target.value)}
                   aria-label="好きな色を選ぶ"
                 />
@@ -895,7 +1072,7 @@ function RecordsScreen({ state, setTab, updateChartSettings }) {
         {state.sessions.length === 0 ? (
           <p className="empty">まだ記録はありません。最初の1回を気軽にはじめよう。</p>
         ) : state.sessions.map((session) => {
-          const subject = SUBJECTS.find((item) => item.id === session.subject) || SUBJECTS[0];
+          const subject = subjects.find((item) => item.id === session.subject) || { label: "削除済み", icon: "nav-quest.png" };
           return (
             <article className="history-card" key={session.id}>
               <img src={asset(`crops/${subject.icon}`)} alt="" />

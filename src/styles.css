@@ -306,7 +306,7 @@ button:disabled {
 }
 
 .subject-row button.active {
-  background: linear-gradient(180deg, #8aa36b, #6c884f);
+  background: var(--subject-color, #7f985e);
   color: #fff;
 }
 
@@ -329,6 +329,135 @@ button:disabled {
   font-size: 1rem;
   font-weight: 950;
   box-shadow: 0 13px 24px rgba(88, 112, 65, 0.28);
+}
+
+.start-button.compact {
+  min-height: 50px;
+  margin-top: auto;
+}
+
+.subject-edit-screen {
+  gap: 12px;
+}
+
+.subject-editor-card {
+  display: grid;
+  gap: 13px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(255, 250, 239, 0.9);
+  box-shadow: 0 10px 24px rgba(94, 69, 39, 0.08);
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.editor-head b {
+  color: #59452f;
+  font-size: 0.96rem;
+  font-weight: 950;
+}
+
+.editor-head small {
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 850;
+}
+
+.editor-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #8da76f, #6b854f);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.subject-edit-list {
+  display: grid;
+  gap: 9px;
+}
+
+.subject-edit-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 54px 36px;
+  align-items: end;
+  gap: 8px;
+  min-height: 72px;
+  padding: 10px;
+  border: 1px solid rgba(208, 179, 132, 0.35);
+  border-radius: 18px;
+  background: rgba(255, 253, 247, 0.82);
+}
+
+.subject-edit-row img {
+  align-self: center;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.subject-edit-row label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.subject-edit-row label span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.subject-edit-row input[type="text"] {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid rgba(208, 179, 132, 0.48);
+  border-radius: 12px;
+  background: #fffaf0;
+  color: #4f3d2c;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.subject-color-field {
+  position: relative;
+}
+
+.subject-color-field input {
+  width: 42px;
+  height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 13px;
+  background: var(--subject-color);
+  overflow: hidden;
+}
+
+.delete-subject-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 38px;
+  border-radius: 13px;
+  background: #fff1e6;
+  color: #a46446;
 }
 
 .quick-grid {
