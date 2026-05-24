@@ -548,7 +548,7 @@ function Vines() {
   );
 }
 
-function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc, onSoundClick, soundEnabled }) {
+function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSoundClick, soundEnabled }) {
   return (
     <header className="topbar">
       {onBack ? (
@@ -561,7 +561,6 @@ function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc,
       <strong>{title}</strong>
       <div className="top-pills">
         {typeof points === "number" && <span><Sprout size={15} />{points.toLocaleString()} pt</span>}
-        {typeof streak === "number" && <span>💧 {streak || 0}</span>}
         {rightIcon === "music" && onSoundClick && (
           <button className={`icon-button ${soundEnabled ? "active" : ""}`} type="button" aria-label="音" onClick={onSoundClick}>
             <Music2 size={18} />
@@ -575,7 +574,7 @@ function TopBar({ title, points, streak, onBack, rightIcon = "music", avatarSrc,
 function HomeScreen({ state, outfit, subject, progress, setTab, startTimer, setSubject }) {
   return (
     <div className="screen home-screen">
-      <TopBar title="たまの勉強タイマー" points={state.points} streak={state.streak} avatarSrc={asset(`avatar/full/${outfit.id}.png`)} />
+      <TopBar title="たまの勉強タイマー" points={state.points} avatarSrc={asset(`avatar/full/${outfit.id}.png`)} />
       <section className="hero-card">
         <div className="hero-copy">
           <span>今日の勉強時間</span>
