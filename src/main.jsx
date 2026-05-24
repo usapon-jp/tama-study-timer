@@ -979,13 +979,7 @@ function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject,
 
 function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [selectedSubjectId, setSelectedSubjectId] = useState(state.chartSettings.visibleSubjects[0] || subjects[0].id);
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => startOfWeek(new Date()));
-  useEffect(() => {
-    if (!subjects.some((subject) => subject.id === selectedSubjectId)) {
-      setSelectedSubjectId(subjects[0].id);
-    }
-  }, [subjects, selectedSubjectId]);
   const totalToday = state.sessions.filter((session) => session.date === todayKey()).reduce((sum, session) => sum + session.minutes, 0);
   const currentWeekStart = startOfWeek(new Date());
   const isCurrentWeek = sameDateKey(visibleWeekStart, currentWeekStart);
@@ -994,7 +988,6 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
   const visibleTotals = weekDays.map((day) => visibleSubjects.reduce((sum, subject) => sum + day.subjects[subject.id], 0));
   const maxDayTotal = Math.max(60, ...visibleTotals);
   const weekTotal = visibleTotals.reduce((sum, minutes) => sum + minutes, 0);
-  const selectedColor = state.chartSettings.colors[selectedSubjectId] || subjects[0].color;
 
   function toggleChartSubject(subjectId) {
     const current = state.chartSettings.visibleSubjects;
@@ -1002,20 +995,12 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
       ? current.filter((id) => id !== subjectId)
       : [...current, subjectId];
     updateChartSettings({ visibleSubjects: next.length ? next : [subjectId] });
-    setSelectedSubjectId(subjectId);
-  }
-
-  function setChartColor(subjectId, color) {
-    updateChartSettings({ colors: { [subjectId]: color } });
-    setSelectedSubjectId(subjectId);
   }
 
   function resetChartSettings() {
     updateChartSettings({
       visibleSubjects: subjects.map((subject) => subject.id),
-      colors: Object.fromEntries(subjects.map((subject) => [subject.id, subject.color])),
     });
-    setSelectedSubjectId(subjects[0].id);
   }
 
   function moveWeek(amount) {
@@ -1105,7 +1090,7 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
             <div className="sheet-head">
               <div>
                 <span><Palette size={16} />表示設定</span>
-                <small>表示する教科と色を選べます</small>
+                <small>グラフに表示する教科を選べます</small>
               </div>
               <button className="icon-button" type="button" onClick={() => setSettingsOpen(false)} aria-label="閉じる">
                 <Check size={18} />
@@ -1114,18 +1099,14 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
             <div className="subject-settings-list">
               {subjects.map((subject) => {
                 const checked = state.chartSettings.visibleSubjects.includes(subject.id);
-                const active = selectedSubjectId === subject.id;
                 return (
                   <button
-                    className={`subject-setting-row ${active ? "active" : ""}`}
+                    className={checked ? "subject-setting-row active" : "subject-setting-row"}
                     type="button"
                     key={subject.id}
-                    onClick={() => setSelectedSubjectId(subject.id)}
+                    onClick={() => toggleChartSubject(subject.id)}
                   >
-                    <span className={`setting-check ${checked ? "checked" : ""}`} onClick={(event) => {
-                      event.stopPropagation();
-                      toggleChartSubject(subject.id);
-                    }}>
+                    <span className={`setting-check ${checked ? "checked" : ""}`}>
                       {checked && <Check size={13} />}
                     </span>
                     <img src={asset(`crops/${subject.icon}`)} alt="" />
@@ -1135,29 +1116,8 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
                 );
               })}
             </div>
-            <div className="color-palette">
-              {CHART_COLOR_SWATCHES.map((color) => (
-                <button
-                  key={color}
-                  className={selectedColor === color ? "active" : ""}
-                  type="button"
-                  style={{ "--swatch-color": color }}
-                  aria-label={`${color}にする`}
-                  onClick={() => setChartColor(selectedSubjectId, color)}
-                />
-              ))}
-              <label className="custom-color">
-                <span>自由</span>
-                <input
-                  type="color"
-                  value={selectedColor}
-                  onChange={(event) => setChartColor(selectedSubjectId, event.target.value)}
-                  aria-label="好きな色を選ぶ"
-                />
-              </label>
-            </div>
             <div className="sheet-actions">
-              <button type="button" onClick={resetChartSettings}>リセット</button>
+              <button type="button" onClick={resetChartSettings}>すべて表示</button>
               <button className="primary" type="button" onClick={() => setSettingsOpen(false)}>保存</button>
             </div>
           </section>
