@@ -193,6 +193,27 @@ button:disabled {
   box-shadow: 0 12px 28px rgba(101, 75, 43, 0.12);
 }
 
+.hero-card::before,
+.hero-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hero-card::before {
+  z-index: 0;
+  background: var(--hero-room-bg) center / cover no-repeat;
+  opacity: 0.42;
+}
+
+.hero-card::after {
+  z-index: 1;
+  background:
+    linear-gradient(90deg, rgba(255, 249, 234, 0.92) 0%, rgba(255, 249, 234, 0.72) 46%, rgba(255, 249, 234, 0.48) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.62), transparent 38%);
+}
+
 .hero-copy {
   position: relative;
   z-index: 2;
@@ -219,6 +240,7 @@ button:disabled {
 
 .ring {
   position: absolute;
+  z-index: 2;
   left: 45px;
   bottom: 36px;
   display: grid;
@@ -234,6 +256,7 @@ button:disabled {
 
 .home-character {
   position: absolute;
+  z-index: 2;
   right: -5px;
   bottom: 9px;
   width: 198px;

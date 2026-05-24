@@ -26,7 +26,12 @@ import "./styles.css";
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 15, 25, 45, 60];
-const STUDY_BGM_SRC = asset("audio/study-bgm.mp3");
+const STUDY_BGM_TRACKS = [
+  "audio/study-bgm-1.mp3",
+  "audio/study-bgm-2.mp3",
+  "audio/study-bgm-3.mp3",
+  "audio/study-bgm-4.mp3",
+].map(asset);
 const DEFAULT_SUBJECTS = [
   { id: "math", label: "数学", icon: "quest-math.png", color: "#7f985e" },
   { id: "english", label: "英語", icon: "quest-english.png", color: "#7aa6bd" },
@@ -317,6 +322,8 @@ function App() {
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const audioContextRef = useRef(null);
   const bgmAudioRef = useRef(null);
+  const bgmTrackIndexRef = useRef(0);
+  const wakeLockRef = useRef(null);
   const previousSessionCountRef = useRef(state.sessions.length);
   const activeOutfit = OUTFITS.find((item) => item.id === state.selectedOutfitId) || OUTFITS[0];
   const subjects = state.subjects?.length ? state.subjects : DEFAULT_SUBJECTS;
@@ -357,7 +364,20 @@ function App() {
     previousSessionCountRef.current = state.sessions.length;
   }, [state.sessions.length, state.sound?.alarm]);
 
-  useEffect(() => () => stopBgm(), []);
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "visible" && state.sound?.bgm && state.timer.running && tab === "timer") {
+        startBgm();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [state.sound?.bgm, state.timer.running, tab]);
+
+  useEffect(() => () => {
+    stopBgm();
+    releaseWakeLock();
+  }, []);
 
   function ensureAudioContext() {
     if (!audioContextRef.current) {
@@ -369,24 +389,55 @@ function App() {
     return audioContextRef.current;
   }
 
-  function startBgm() {
-    ensureAudioContext();
+  function ensureBgmAudio() {
     if (!bgmAudioRef.current) {
-      const audio = new Audio(STUDY_BGM_SRC);
-      audio.loop = true;
+      const audio = new Audio(STUDY_BGM_TRACKS[bgmTrackIndexRef.current]);
+      audio.loop = false;
       audio.volume = 0.28;
       audio.preload = "auto";
+      audio.addEventListener("ended", () => {
+        bgmTrackIndexRef.current = (bgmTrackIndexRef.current + 1) % STUDY_BGM_TRACKS.length;
+        audio.src = STUDY_BGM_TRACKS[bgmTrackIndexRef.current];
+        audio.play().catch(() => {
+          // Mobile browsers can pause background media until the page is active again.
+        });
+      });
       bgmAudioRef.current = audio;
     }
-    bgmAudioRef.current.play().catch(() => {
+    return bgmAudioRef.current;
+  }
+
+  function startBgm() {
+    ensureAudioContext();
+    const audio = ensureBgmAudio();
+    requestWakeLock();
+    audio.play().catch(() => {
       // Mobile browsers require a user gesture before audio can start.
     });
   }
 
   function stopBgm() {
     const audio = bgmAudioRef.current;
-    if (!audio) return;
-    audio.pause();
+    if (audio) audio.pause();
+    releaseWakeLock();
+  }
+
+  async function requestWakeLock() {
+    if (!("wakeLock" in navigator) || wakeLockRef.current || document.visibilityState !== "visible") return;
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request("screen");
+      wakeLockRef.current.addEventListener("release", () => {
+        wakeLockRef.current = null;
+      });
+    } catch {
+      wakeLockRef.current = null;
+    }
+  }
+
+  function releaseWakeLock() {
+    const lock = wakeLockRef.current;
+    wakeLockRef.current = null;
+    lock?.release?.().catch(() => {});
   }
 
   function playAlarm() {
@@ -712,7 +763,7 @@ function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startT
   return (
     <div className="screen home-screen">
       <TopBar title="たまの勉強タイマー" points={state.points} avatarSrc={asset(`avatar/full/${outfit.id}.png`)} />
-      <section className="hero-card">
+      <section className="hero-card" style={{ "--hero-room-bg": `url(${asset("crops/home-bg.png")})` }}>
         <div className="hero-copy">
           <span>今日の勉強時間</span>
           <strong>{formatHours(state.todayMinutes)}</strong>
