@@ -63,12 +63,9 @@ const OUTFITS = [
   { id: "outfit-n-2", name: "やさしいカーデ", cost: 400 },
   { id: "outfit-n-3", name: "リボンワンピース", cost: 600 },
   { id: "outfit-r-1", name: "ナチュラルワンピ", cost: 450 },
-  { id: "outfit-r-2", name: "星待ちラベンダー", cost: 360 },
-  { id: "outfit-r-3", name: "夜色の魔法使い", cost: 460 },
-  { id: "outfit-sr-1", name: "森の祝福ドレス", cost: 620 },
-  { id: "outfit-sr-2", name: "水色星花ドレス", cost: 760 },
-  { id: "outfit-sr-3", name: "春霞の花冠ドレス", cost: 900 },
 ];
+const DEFAULT_OUTFIT_ID = "outfit-n-1";
+const OUTFIT_IDS = new Set(OUTFITS.map((outfit) => outfit.id));
 const STUDY_IMAGES = {
   "outfit-n-1": "study/full/outfit-n-1.png",
   "outfit-n-2": "study/full/outfit-n-2.png",
@@ -103,8 +100,8 @@ function defaultState() {
     streak: 0,
     selectedSubject: "math",
     subjects: DEFAULT_SUBJECTS,
-    selectedOutfitId: "outfit-n-1",
-    unlockedOutfits: ["outfit-n-1"],
+    selectedOutfitId: DEFAULT_OUTFIT_ID,
+    unlockedOutfits: [DEFAULT_OUTFIT_ID],
     sessions: [],
     timer: {
       mode: "focus",
@@ -160,8 +157,10 @@ function normalizeState(raw) {
   const today = todayKey();
   const sameDay = raw.today === today;
   const subjects = normalizeSubjects(raw.subjects);
-  const unlocked = Array.isArray(raw.unlockedOutfits) && raw.unlockedOutfits.length ? raw.unlockedOutfits : base.unlockedOutfits;
-  const selectedOutfitId = unlocked.includes(raw.selectedOutfitId) ? raw.selectedOutfitId : unlocked[0] || "outfit-n-1";
+  const rawUnlocked = Array.isArray(raw.unlockedOutfits) && raw.unlockedOutfits.length ? raw.unlockedOutfits : base.unlockedOutfits;
+  const unlocked = rawUnlocked.filter((id) => OUTFIT_IDS.has(id));
+  if (!unlocked.includes(DEFAULT_OUTFIT_ID)) unlocked.unshift(DEFAULT_OUTFIT_ID);
+  const selectedOutfitId = unlocked.includes(raw.selectedOutfitId) ? raw.selectedOutfitId : unlocked[0] || DEFAULT_OUTFIT_ID;
   return {
     ...base,
     ...raw,
@@ -1186,6 +1185,24 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
 }
 
 function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
+  const [purchaseOutfit, setPurchaseOutfit] = useState(null);
+  const purchaseUnlocked = purchaseOutfit ? state.unlockedOutfits.includes(purchaseOutfit.id) : false;
+  const purchaseCanBuy = purchaseOutfit ? state.points >= purchaseOutfit.cost : false;
+
+  function handleOutfitTap(outfit) {
+    if (state.unlockedOutfits.includes(outfit.id)) {
+      unlockOrSelect(outfit);
+      return;
+    }
+    setPurchaseOutfit(outfit);
+  }
+
+  function confirmPurchase() {
+    if (!purchaseOutfit || !purchaseCanBuy || purchaseUnlocked) return;
+    unlockOrSelect(purchaseOutfit);
+    setPurchaseOutfit(null);
+  }
+
   return (
     <div className="screen wardrobe-screen">
       <TopBar title="ごほうび" points={state.points} onBack={() => setTab("home")} />
@@ -1203,7 +1220,7 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
               className={`outfit-card ${selected ? "selected" : ""} ${!unlocked ? "locked" : ""}`}
               type="button"
               key={outfit.id}
-              onClick={() => unlockOrSelect(outfit)}
+              onClick={() => handleOutfitTap(outfit)}
             >
               <span className="zoom" aria-hidden="true">⌕</span>
               <img src={asset(`crops/${outfit.id}.png`)} alt="" />
@@ -1215,6 +1232,25 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
           );
         })}
       </div>
+      {purchaseOutfit && (
+        <div className="purchase-overlay" role="dialog" aria-modal="true" aria-label="購入確認">
+          <button className="purchase-scrim" type="button" aria-label="閉じる" onClick={() => setPurchaseOutfit(null)} />
+          <section className="purchase-dialog">
+            <img src={asset(`crops/${purchaseOutfit.id}.png`)} alt="" />
+            <div>
+              <span>{purchaseOutfit.name}</span>
+              <strong>{purchaseOutfit.cost.toLocaleString()}ptで購入しますか？</strong>
+              {!purchaseCanBuy && <small>ポイントが足りません</small>}
+            </div>
+            <div className="purchase-actions">
+              <button type="button" onClick={() => setPurchaseOutfit(null)}>キャンセル</button>
+              <button className="primary" type="button" onClick={confirmPurchase} disabled={!purchaseCanBuy}>
+                購入する
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
