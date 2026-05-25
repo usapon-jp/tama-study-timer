@@ -95,6 +95,8 @@ function defaultState() {
   return {
     appName: "たまの勉強タイマー",
     points: 0,
+    timerOffset: { x: 0, y: 0 },
+    characterOffset: { x: 0, y: 0 },
     totalMinutes: 0,
     todayMinutes: 0,
     today: todayKey(),
@@ -166,6 +168,8 @@ function normalizeState(raw) {
     ...base,
     ...raw,
     appName: typeof raw.appName === "string" && raw.appName.trim() ? raw.appName.trim().slice(0, 30) : base.appName,
+    timerOffset: raw.timerOffset && typeof raw.timerOffset.x === "number" && typeof raw.timerOffset.y === "number" ? raw.timerOffset : { x: 0, y: 0 },
+    characterOffset: raw.characterOffset && typeof raw.characterOffset.x === "number" && typeof raw.characterOffset.y === "number" ? raw.characterOffset : { x: 0, y: 0 },
     today,
     todayMinutes: sameDay ? Number(raw.todayMinutes || 0) : 0,
     points: Math.max(0, Number(raw.points || 0)),
@@ -682,6 +686,14 @@ function App() {
     }));
   }
 
+  function updateLayoutOffsets(timerOffset, characterOffset) {
+    setState((current) => ({
+      ...current,
+      timerOffset,
+      characterOffset,
+    }));
+  }
+
   return (
     <main className="stage">
       <div className="showcase" aria-label={state.appName || "たまの勉強タイマー"}>
@@ -720,6 +732,7 @@ function App() {
               updateSound={updateSound}
               playBgmPreview={playBgmPreview}
               playAlarm={playAlarm}
+              updateLayoutOffsets={updateLayoutOffsets}
             />
           )}
           {tab === "records" && <RecordsScreen state={state} subjects={subjects} setTab={setTab} updateChartSettings={updateChartSettings} />}
@@ -920,11 +933,112 @@ function TimerScreen({
   updateSound,
   playBgmPreview,
   playAlarm,
+  updateLayoutOffsets,
 }) {
   const isRunning = state.timer.running;
   const [customFocusOpen, setCustomFocusOpen] = useState(false);
   const [customFocusMinutes, setCustomFocusMinutes] = useState(String(state.timer.focusMinutes || 20));
   const isCustomFocus = !FOCUS_PRESETS.includes(Number(state.timer.focusMinutes));
+
+  // Layout dragging states
+  const [isAdjusting, setIsAdjusting] = useState(false);
+  const [activeDrag, setActiveDrag] = useState(null);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0, initialX: 0, initialY: 0 });
+  const [tempTimerOffset, setTempTimerOffset] = useState({ x: 0, y: 0 });
+  const [tempCharOffset, setTempCharOffset] = useState({ x: 0, y: 0 });
+  const longPressTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    setTempTimerOffset(state.timerOffset || { x: 0, y: 0 });
+    setTempCharOffset(state.characterOffset || { x: 0, y: 0 });
+  }, [state.timerOffset, state.characterOffset, isAdjusting]);
+
+  function handleScenePointerDown(e) {
+    if (isAdjusting) return;
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+    }
+    longPressTimeoutRef.current = setTimeout(() => {
+      setIsAdjusting(true);
+      if (navigator.vibrate) {
+        navigator.vibrate(100);
+      }
+    }, 800);
+  }
+
+  function handleScenePointerUpOrLeave() {
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+  }
+
+  function handleElementPointerDown(e, type) {
+    if (!isAdjusting) return;
+    e.stopPropagation();
+    e.preventDefault();
+    e.target.setPointerCapture(e.pointerId);
+    setActiveDrag(type);
+    
+    const initialX = type === "timer" ? tempTimerOffset.x : tempCharOffset.x;
+    const initialY = type === "timer" ? tempTimerOffset.y : tempCharOffset.y;
+    
+    setDragStart({
+      x: e.clientX,
+      y: e.clientY,
+      initialX,
+      initialY,
+    });
+  }
+
+  function handleElementPointerMove(e) {
+    if (!activeDrag) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const dx = e.clientX - dragStart.x;
+    const dy = e.clientY - dragStart.y;
+    
+    if (activeDrag === "timer") {
+      setTempTimerOffset({
+        x: dragStart.initialX + dx,
+        y: dragStart.initialY + dy,
+      });
+    } else {
+      setTempCharOffset({
+        x: dragStart.initialX + dx,
+        y: dragStart.initialY + dy,
+      });
+    }
+  }
+
+  function handleElementPointerUp(e) {
+    if (!activeDrag) return;
+    e.stopPropagation();
+    e.preventDefault();
+    try {
+      e.target.releasePointerCapture(e.pointerId);
+    } catch (err) {}
+    setActiveDrag(null);
+  }
+
+  function saveOffsets() {
+    setIsAdjusting(false);
+    if (updateLayoutOffsets) {
+      updateLayoutOffsets(tempTimerOffset, tempCharOffset);
+    }
+  }
+
+  function resetOffsets() {
+    setTempTimerOffset({ x: 0, y: 0 });
+    setTempCharOffset({ x: 0, y: 0 });
+    if (updateLayoutOffsets) {
+      updateLayoutOffsets({ x: 0, y: 0 }, { x: 0, y: 0 });
+    }
+    setIsAdjusting(false);
+  }
+
+  const currentTimerOffset = isAdjusting ? tempTimerOffset : (state.timerOffset || { x: 0, y: 0 });
+  const currentCharOffset = isAdjusting ? tempCharOffset : (state.characterOffset || { x: 0, y: 0 });
 
   function openCustomFocus() {
     setCustomFocusMinutes(String(state.timer.focusMinutes || 20));
@@ -1028,13 +1142,55 @@ function TimerScreen({
           )}
         </>
       )}
-      <section className="focus-scene">
-        <div className="timer-wreath" style={{ "--progress": `${Math.round(progress * 360)}deg` }}>
+      <section
+        className="focus-scene"
+        onPointerDown={handleScenePointerDown}
+        onPointerUp={handleScenePointerUpOrLeave}
+        onPointerLeave={handleScenePointerUpOrLeave}
+        style={{ userSelect: "none" }}
+      >
+        <div
+          className={`timer-wreath ${isAdjusting ? "adjusting" : ""}`}
+          style={{
+            "--progress": `${Math.round(progress * 360)}deg`,
+            transform: `translate(calc(-50% + ${currentTimerOffset.x}px), ${currentTimerOffset.y}px)`,
+            touchAction: isAdjusting ? "none" : "auto",
+          }}
+          onPointerDown={(e) => handleElementPointerDown(e, "timer")}
+          onPointerMove={handleElementPointerMove}
+          onPointerUp={handleElementPointerUp}
+          onPointerCancel={handleElementPointerUp}
+        >
           <span>{formatTime(displayValue)}</span>
           <small>{state.timer.mode === "focus" ? "残り時間" : "経過時間"}</small>
         </div>
-        <img className="desk-bg" src={asset("crops/home-bg.png")} alt="" />
-        <img className="study-character" src={asset(studyImageFor(outfit.id))} alt={`${outfit.name}で勉強するたま`} />
+        <img className="desk-bg" src={asset("crops/home-bg.png")} alt="" draggable="false" onDragStart={(e) => e.preventDefault()} />
+        <img
+          className={`study-character ${isAdjusting ? "adjusting" : ""}`}
+          src={asset(studyImageFor(outfit.id))}
+          alt={`${outfit.name}で勉強するたま`}
+          draggable="false"
+          onDragStart={(e) => e.preventDefault()}
+          style={{
+            transform: `translate(${currentCharOffset.x}px, ${currentCharOffset.y}px)`,
+            touchAction: isAdjusting ? "none" : "auto",
+          }}
+          onPointerDown={(e) => handleElementPointerDown(e, "character")}
+          onPointerMove={handleElementPointerMove}
+          onPointerUp={handleElementPointerUp}
+          onPointerCancel={handleElementPointerUp}
+        />
+        {isAdjusting && (
+          <div className="layout-adjust-overlay">
+            <div className="adjust-badge">位置の調整中</div>
+            <div className="adjust-tip">タイマーやキャラクターをドラッグして移動できます</div>
+            <div className="adjust-actions">
+              <button type="button" className="adjust-btn save" onClick={saveOffsets}>保存</button>
+              <button type="button" className="adjust-btn reset" onClick={resetOffsets}>リセット</button>
+              <button type="button" className="adjust-btn cancel" onClick={() => setIsAdjusting(false)}>キャンセル</button>
+            </div>
+          </div>
+        )}
       </section>
       <div className="timer-actions">
         {!isRunning ? (

@@ -1821,3 +1821,98 @@ button:disabled {
     min-height: 58px;
   }
 }
+
+
+/* Layout Adjustment Overlay styles */
+.layout-adjust-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(93, 67, 35, 0.4);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  pointer-events: none;
+}
+
+.layout-adjust-overlay * {
+  pointer-events: auto;
+}
+
+.adjust-badge {
+  background: #e27d5f;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  animation: adjustPulse 1.5s infinite alternate;
+}
+
+@keyframes adjustPulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.05); }
+}
+
+.adjust-tip {
+  color: white;
+  font-size: 0.72rem;
+  text-align: center;
+  background: rgba(0,0,0,0.7);
+  padding: 6px 12px;
+  border-radius: 8px;
+  max-width: 85%;
+  margin-top: 8px;
+  line-height: 1.4;
+  font-weight: bold;
+}
+
+.adjust-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.adjust-btn {
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 950;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+  font-family: inherit;
+}
+
+.adjust-btn.save {
+  background: #7d9560;
+  color: white;
+}
+
+.adjust-btn.reset {
+  background: #897158;
+  color: white;
+}
+
+.adjust-btn.cancel {
+  background: #ffffff;
+  color: #4f3d2c;
+  border: 1px solid #d0b384;
+}
+
+.timer-wreath.adjusting {
+  outline: 2px dashed #e27d5f;
+  outline-offset: 4px;
+  cursor: move;
+  z-index: 12 !important;
+}
+
+.study-character.adjusting {
+  outline: 2px dashed #e27d5f;
+  outline-offset: 4px;
+  cursor: move;
+  z-index: 11 !important;
+}
