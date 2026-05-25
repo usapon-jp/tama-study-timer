@@ -556,6 +556,8 @@ button:disabled {
 }
 
 .preset-row button {
+  display: grid;
+  place-items: center;
   min-height: 34px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -567,6 +569,55 @@ button:disabled {
 .preset-row .active {
   color: #fff;
   background: #7f985e;
+}
+
+.custom-focus-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 250, 238, 0.9);
+  box-shadow: 0 10px 20px rgba(93, 67, 35, 0.08);
+}
+
+.custom-focus-panel label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: #6c563f;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+.custom-focus-panel input {
+  width: 100%;
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid rgba(208, 179, 132, 0.48);
+  border-radius: 12px;
+  background: #fffaf0;
+  color: #4f3d2c;
+  font: inherit;
+  font-weight: 950;
+}
+
+.custom-focus-panel small {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.custom-focus-panel button {
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(180deg, #8da76f, #6b854f);
+  font-size: 0.78rem;
+  font-weight: 950;
 }
 
 .task-pill {
@@ -600,7 +651,7 @@ button:disabled {
 
 .sound-panel {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   margin-top: -4px;

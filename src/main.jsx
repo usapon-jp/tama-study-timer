@@ -25,7 +25,7 @@ import "./styles.css";
 
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const MAX_STORED_SESSIONS = 365;
-const FOCUS_PRESETS = [5, 15, 25, 45, 60];
+const FOCUS_PRESETS = [5, 20, 40, 60];
 const STUDY_BGM_TRACKS = [
   "audio/study-bgm-1.mp3",
   "audio/study-bgm-2.mp3",
@@ -105,11 +105,11 @@ function defaultState() {
     sessions: [],
     timer: {
       mode: "focus",
-      focusMinutes: 25,
+      focusMinutes: 20,
       running: false,
       startedAt: null,
       elapsedBeforeStart: 0,
-      lastDisplaySeconds: 25 * 60,
+      lastDisplaySeconds: 20 * 60,
     },
     sound: {
       bgm: false,
@@ -295,7 +295,7 @@ function displaySeconds(timer, nowTick) {
   const elapsedRunning = timer.running && timer.startedAt ? Math.floor((nowTick - timer.startedAt) / 1000) : 0;
   const elapsed = Math.max(0, Number(timer.elapsedBeforeStart || 0) + elapsedRunning);
   if (timer.mode === "free") return elapsed;
-  return Math.max(0, Number(timer.focusMinutes || 25) * 60 - elapsed);
+  return Math.max(0, Number(timer.focusMinutes || 20) * 60 - elapsed);
 }
 
 function elapsedSeconds(timer, nowTick) {
@@ -303,10 +303,8 @@ function elapsedSeconds(timer, nowTick) {
   return Math.max(0, Number(timer.elapsedBeforeStart || 0) + elapsedRunning);
 }
 
-function rewardFor(minutes, mode) {
-  const base = minutes * 2;
-  const bonus = mode === "focus" && minutes >= 25 ? 10 : 0;
-  return base + bonus;
+function rewardFor(minutes) {
+  return Math.max(0, Math.round(Number(minutes || 0)));
 }
 
 function createAudioContext() {
@@ -322,6 +320,7 @@ function App() {
   const audioContextRef = useRef(null);
   const bgmAudioRef = useRef(null);
   const bgmTrackIndexRef = useRef(0);
+  const bgmPreviewTimeoutRef = useRef(null);
   const wakeLockRef = useRef(null);
   const previousSessionCountRef = useRef(state.sessions.length);
   const activeOutfit = OUTFITS.find((item) => item.id === state.selectedOutfitId) || OUTFITS[0];
@@ -415,8 +414,31 @@ function App() {
     });
   }
 
+  function playBgmPreview() {
+    ensureAudioContext();
+    const audio = ensureBgmAudio();
+    if (bgmPreviewTimeoutRef.current) {
+      window.clearTimeout(bgmPreviewTimeoutRef.current);
+      bgmPreviewTimeoutRef.current = null;
+    }
+    audio.currentTime = 0;
+    audio.play().catch(() => {
+      // Mobile browsers require a user gesture before audio can start.
+    });
+    if (!(state.sound?.bgm && state.timer.running && tab === "timer")) {
+      bgmPreviewTimeoutRef.current = window.setTimeout(() => {
+        audio.pause();
+        bgmPreviewTimeoutRef.current = null;
+      }, 8000);
+    }
+  }
+
   function stopBgm() {
     const audio = bgmAudioRef.current;
+    if (bgmPreviewTimeoutRef.current) {
+      window.clearTimeout(bgmPreviewTimeoutRef.current);
+      bgmPreviewTimeoutRef.current = null;
+    }
     if (audio) audio.pause();
     releaseWakeLock();
   }
@@ -536,7 +558,7 @@ function App() {
       if (!current.timer.running && elapsedSeconds(current.timer, Date.now()) === 0) return current;
       const seconds = elapsedSeconds(current.timer, Date.now());
       const minutes = Math.max(1, Math.round(seconds / 60));
-      const reward = rewardFor(minutes, current.timer.mode);
+      const reward = rewardFor(minutes);
       const session = {
         id: `${Date.now()}`,
         date: todayKey(),
@@ -686,6 +708,7 @@ function App() {
               soundPanelOpen={soundPanelOpen}
               toggleSoundPanel={toggleSoundPanel}
               updateSound={updateSound}
+              playBgmPreview={playBgmPreview}
               playAlarm={playAlarm}
             />
           )}
@@ -835,9 +858,27 @@ function TimerScreen({
   soundPanelOpen,
   toggleSoundPanel,
   updateSound,
+  playBgmPreview,
   playAlarm,
 }) {
   const isRunning = state.timer.running;
+  const [customFocusOpen, setCustomFocusOpen] = useState(false);
+  const [customFocusMinutes, setCustomFocusMinutes] = useState(String(state.timer.focusMinutes || 20));
+  const isCustomFocus = !FOCUS_PRESETS.includes(Number(state.timer.focusMinutes));
+
+  function openCustomFocus() {
+    setCustomFocusMinutes(String(state.timer.focusMinutes || 20));
+    setCustomFocusOpen((open) => !open);
+  }
+
+  function applyCustomFocus() {
+    const parsedMinutes = Number(customFocusMinutes);
+    const minutes = Number.isFinite(parsedMinutes) ? Math.min(180, Math.max(1, Math.round(parsedMinutes))) : 20;
+    setFocusMinutes(minutes);
+    setCustomFocusMinutes(String(minutes));
+    setCustomFocusOpen(false);
+  }
+
   return (
     <div className="screen timer-screen">
       <header className="timer-header">
@@ -863,6 +904,7 @@ function TimerScreen({
             />
             勉強用BGM
           </label>
+          <button type="button" onClick={playBgmPreview}>試す</button>
           <label>
             <input
               type="checkbox"
@@ -879,18 +921,52 @@ function TimerScreen({
         <button type="button" className={state.timer.mode === "free" ? "active" : ""} onClick={() => changeMode("free")}>自由計測</button>
       </div>
       {state.timer.mode === "focus" && (
-        <div className="preset-row">
-          {FOCUS_PRESETS.map((minutes) => (
+        <>
+          <div className="preset-row">
+            {FOCUS_PRESETS.map((minutes) => (
+              <button
+                key={minutes}
+                type="button"
+                className={state.timer.focusMinutes === minutes ? "active" : ""}
+                onClick={() => {
+                  setFocusMinutes(minutes);
+                  setCustomFocusOpen(false);
+                }}
+              >
+                {minutes}
+              </button>
+            ))}
             <button
-              key={minutes}
               type="button"
-              className={state.timer.focusMinutes === minutes ? "active" : ""}
-              onClick={() => setFocusMinutes(minutes)}
+              className={isCustomFocus ? "active" : ""}
+              onClick={openCustomFocus}
+              aria-label="カスタム時間"
             >
-              {minutes}
+              <Plus size={16} />
             </button>
-          ))}
-        </div>
+          </div>
+          {customFocusOpen && (
+            <div className="custom-focus-panel">
+              <label>
+                <span>カスタム</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="180"
+                  inputMode="numeric"
+                  value={customFocusMinutes}
+                  onChange={(event) => setCustomFocusMinutes(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") applyCustomFocus();
+                  }}
+                  aria-label="カスタム時間 分"
+                />
+                <small>分</small>
+              </label>
+              <button type="button" onClick={applyCustomFocus}>設定</button>
+            </div>
+          )}
+        </>
       )}
       <section className="focus-scene">
         <div className="timer-wreath" style={{ "--progress": `${Math.round(progress * 360)}deg` }}>
@@ -910,8 +986,8 @@ function TimerScreen({
         <button className="round-action" type="button" onClick={resetTimer} aria-label="リセット"><RotateCcw size={18} /></button>
       </div>
       <div className="bonus-card">
-        <span><Sprout size={17} />集中ボーナス</span>
-        <b>+{rewardFor(Math.max(1, Math.round(spentSeconds / 60)), state.timer.mode)} pt</b>
+        <span><Sprout size={17} />獲得ポイント</span>
+        <b>+{rewardFor(Math.max(1, Math.round(spentSeconds / 60)))} pt</b>
         <progress value={Math.min(100, Math.round(progress * 100))} max="100" />
       </div>
     </div>
