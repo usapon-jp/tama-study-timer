@@ -93,6 +93,7 @@ function isHexColor(value) {
 
 function defaultState() {
   return {
+    appName: "たまの勉強タイマー",
     points: 0,
     totalMinutes: 0,
     todayMinutes: 0,
@@ -164,6 +165,7 @@ function normalizeState(raw) {
   return {
     ...base,
     ...raw,
+    appName: typeof raw.appName === "string" && raw.appName.trim() ? raw.appName.trim().slice(0, 30) : base.appName,
     today,
     todayMinutes: sameDay ? Number(raw.todayMinutes || 0) : 0,
     points: Math.max(0, Number(raw.points || 0)),
@@ -673,9 +675,16 @@ function App() {
     });
   }
 
+  function updateAppName(name) {
+    setState((current) => ({
+      ...current,
+      appName: name,
+    }));
+  }
+
   return (
     <main className="stage">
-      <div className="showcase" aria-label="たまの勉強タイマー">
+      <div className="showcase" aria-label={state.appName || "たまの勉強タイマー"}>
         <PhoneFrame className={tab === "timer" ? "timer-phone" : ""}>
           {tab === "home" && (
             <HomeScreen
@@ -687,6 +696,7 @@ function App() {
               setTab={setTab}
               startTimer={startTimer}
               setSubject={(id) => setState((current) => ({ ...current, selectedSubject: id }))}
+              onTitleChange={updateAppName}
             />
           )}
           {tab === "timer" && (
@@ -758,7 +768,22 @@ function Vines() {
   );
 }
 
-function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSoundClick, soundEnabled }) {
+function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSoundClick, soundEnabled, onTitleChange }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(title);
+
+  useEffect(() => {
+    setEditValue(title);
+  }, [title]);
+
+  function handleSave() {
+    setIsEditing(false);
+    const cleaned = editValue.trim();
+    if (cleaned && cleaned !== title && onTitleChange) {
+      onTitleChange(cleaned);
+    }
+  }
+
   return (
     <header className="topbar">
       {onBack ? (
@@ -768,7 +793,37 @@ function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSound
       ) : (
         <span className="mini-avatar" style={{ backgroundImage: `url(${avatarSrc || asset("crops/protagonist.png")})` }} aria-hidden="true" />
       )}
-      <strong>{title}</strong>
+      {isEditing && onTitleChange ? (
+        <input
+          className="topbar-edit-input"
+          type="text"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={handleSave}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSave();
+            if (e.key === "Escape") {
+              setIsEditing(false);
+              setEditValue(title);
+            }
+          }}
+          autoFocus
+          maxLength={18}
+          aria-label="見出しを編集"
+        />
+      ) : onTitleChange ? (
+        <strong
+          className="editable-title"
+          onClick={() => setIsEditing(true)}
+          style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "4px" }}
+          title="クリックして編集"
+        >
+          {title}
+          <Pencil size={11} className="edit-icon" style={{ opacity: 0.6 }} />
+        </strong>
+      ) : (
+        <strong>{title}</strong>
+      )}
       <div className="top-pills">
         {typeof points === "number" && <span><Sprout size={15} />{points.toLocaleString()} pt</span>}
         {rightIcon === "music" && onSoundClick && (
@@ -781,10 +836,15 @@ function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSound
   );
 }
 
-function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startTimer, setSubject }) {
+function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startTimer, setSubject, onTitleChange }) {
   return (
     <div className="screen home-screen">
-      <TopBar title="たまの勉強タイマー" points={state.points} avatarSrc={asset(`avatar/full/${outfit.id}.png`)} />
+      <TopBar
+        title={state.appName || "たまの勉強タイマー"}
+        points={state.points}
+        avatarSrc={asset(`avatar/full/${outfit.id}.png`)}
+        onTitleChange={onTitleChange}
+      />
       <section className="hero-card" style={{ "--hero-room-bg": `url(${asset("crops/home-bg.png")})` }}>
         <div className="hero-copy">
           <span>今日の勉強時間</span>

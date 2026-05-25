@@ -125,6 +125,43 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.editable-title {
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.editable-title:hover {
+  color: #7f985e;
+}
+
+.editable-title .edit-icon {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.editable-title:hover .edit-icon {
+  opacity: 1 !important;
+  transform: scale(1.1);
+}
+
+.topbar-edit-input {
+  width: 100%;
+  font-size: 1.04rem;
+  font-weight: 950;
+  color: #4f3d2c;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid #d0b384;
+  border-radius: 6px;
+  padding: 2px 6px;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.topbar-edit-input:focus {
+  border-color: #7f985e;
+  background: #ffffff;
+}
+
 .top-pills {
   display: flex;
   align-items: center;
