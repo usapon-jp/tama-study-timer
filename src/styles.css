@@ -776,28 +776,34 @@ button:disabled {
   position: absolute;
   color: #77915b;
   font-size: 2.2rem;
+  z-index: 0;
+  opacity: 0.92;
   text-shadow: 0 2px 2px rgba(255, 255, 255, 0.7);
 }
 
 .timer-wreath::before {
-  left: 14px;
-  top: 86px;
+  left: 24px;
+  top: 104px;
   transform: rotate(-22deg);
 }
 
 .timer-wreath::after {
-  right: 18px;
-  top: 56px;
+  right: 25px;
+  top: 92px;
   transform: rotate(20deg);
 }
 
 .timer-wreath span {
+  position: relative;
+  z-index: 1;
   font-size: clamp(2.7rem, 12vw, 3.55rem);
   font-weight: 950;
   font-variant-numeric: tabular-nums;
 }
 
 .timer-wreath small {
+  position: relative;
+  z-index: 1;
   color: #897158;
   font-size: 0.78rem;
   font-weight: 900;
@@ -1858,16 +1864,18 @@ button:disabled {
 }
 
 .adjust-tip {
-  color: white;
-  font-size: 0.72rem;
+  color: #6f6255;
+  font-size: 0.76rem;
   text-align: center;
-  background: rgba(0,0,0,0.7);
-  padding: 6px 12px;
-  border-radius: 8px;
-  max-width: 85%;
+  background: rgba(245, 238, 226, 0.92);
+  padding: 8px 16px;
+  border: 1px solid rgba(202, 183, 158, 0.62);
+  border-radius: 12px;
+  max-width: 88%;
   margin-top: 8px;
-  line-height: 1.4;
-  font-weight: bold;
+  line-height: 1.5;
+  font-weight: 900;
+  box-shadow: 0 8px 18px rgba(74, 57, 38, 0.14);
 }
 
 .adjust-actions {

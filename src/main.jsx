@@ -946,7 +946,7 @@ function TimerScreen({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0, initialX: 0, initialY: 0 });
   const [tempTimerOffset, setTempTimerOffset] = useState({ x: 0, y: 0 });
   const [tempCharOffset, setTempCharOffset] = useState({ x: 0, y: 0 });
-  const longPressTimeoutRef = useRef(null);
+  const lastTapRef = useRef(0);
 
   useEffect(() => {
     setTempTimerOffset(state.timerOffset || { x: 0, y: 0 });
@@ -955,21 +955,16 @@ function TimerScreen({
 
   function handleScenePointerDown(e) {
     if (isAdjusting) return;
-    if (longPressTimeoutRef.current) {
-      clearTimeout(longPressTimeoutRef.current);
-    }
-    longPressTimeoutRef.current = setTimeout(() => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+    if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
       setIsAdjusting(true);
       if (navigator.vibrate) {
         navigator.vibrate(100);
       }
-    }, 800);
-  }
-
-  function handleScenePointerUpOrLeave() {
-    if (longPressTimeoutRef.current) {
-      clearTimeout(longPressTimeoutRef.current);
-      longPressTimeoutRef.current = null;
+      lastTapRef.current = 0;
+    } else {
+      lastTapRef.current = now;
     }
   }
 
@@ -1145,8 +1140,6 @@ function TimerScreen({
       <section
         className="focus-scene"
         onPointerDown={handleScenePointerDown}
-        onPointerUp={handleScenePointerUpOrLeave}
-        onPointerLeave={handleScenePointerUpOrLeave}
         style={{ userSelect: "none" }}
       >
         <div
@@ -1172,7 +1165,7 @@ function TimerScreen({
           draggable="false"
           onDragStart={(e) => e.preventDefault()}
           style={{
-            transform: `translate(${currentCharOffset.x}px, ${currentCharOffset.y}px)`,
+            transform: `translateX(-50%) translate(${currentCharOffset.x}px, ${currentCharOffset.y}px)`,
             touchAction: isAdjusting ? "none" : "auto",
           }}
           onPointerDown={(e) => handleElementPointerDown(e, "character")}
@@ -1183,7 +1176,11 @@ function TimerScreen({
         {isAdjusting && (
           <div className="layout-adjust-overlay">
             <div className="adjust-badge">位置の調整中</div>
-            <div className="adjust-tip">タイマーやキャラクターをドラッグして移動できます</div>
+            <div className="adjust-tip">
+              タイマーやキャラクターを
+              <br />
+              ドラッグして移動できます
+            </div>
             <div className="adjust-actions">
               <button type="button" className="adjust-btn save" onClick={saveOffsets}>保存</button>
               <button type="button" className="adjust-btn reset" onClick={resetOffsets}>リセット</button>
