@@ -1464,39 +1464,30 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
         {outfits.map((outfit) => {
           const unlocked = state.unlockedOutfits.includes(outfit.id);
           const selected = state.selectedOutfitId === outfit.id;
-          const canBuy = state.points >= outfit.cost;
           return (
-            <button
+            <article
               className={`outfit-card ${selected ? "selected" : ""} ${!unlocked ? "locked" : ""}`}
-              type="button"
               key={outfit.id}
-              onClick={() => handleOutfitTap(outfit)}
             >
-              <span
+              <button
                 className="zoom"
-                role="button"
-                tabIndex={0}
+                type="button"
                 aria-label={`${outfit.name}を大きく表示`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setPreviewOutfit(outfit);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setPreviewOutfit(outfit);
-                  }
-                }}
+                onClick={() => setPreviewOutfit(outfit)}
               >
                 ⌕
-              </span>
+              </button>
               <img src={asset(`crops/${outfit.id}.png`)} alt="" />
               <strong>{outfit.name}</strong>
-              <small>
-                {unlocked ? (selected ? "着用中" : "着る") : canBuy ? "購入する" : `${outfit.cost} pt`}
-              </small>
-            </button>
+              <button
+                className="outfit-action"
+                type="button"
+                onClick={() => handleOutfitTap(outfit)}
+                disabled={selected}
+              >
+                {unlocked ? (selected ? "着用中" : "着る") : `${outfit.cost.toLocaleString()} pt`}
+              </button>
+            </article>
           );
         })}
       </div>

@@ -1371,7 +1371,7 @@ button:disabled {
   line-height: 1.35;
 }
 
-.outfit-card small {
+.outfit-action {
   display: inline-flex;
   justify-content: center;
   align-items: center;
@@ -1379,13 +1379,20 @@ button:disabled {
   min-height: 30px;
   padding-inline: 8px;
   border-radius: 999px;
+  border: 0;
   background: rgba(239, 244, 223, 0.76);
   color: #66814a;
+  font-family: inherit;
   font-size: 0.82rem;
   font-weight: 950;
+  cursor: pointer;
 }
 
-.outfit-card.locked small {
+.outfit-action:disabled {
+  cursor: default;
+}
+
+.outfit-card.locked .outfit-action {
   color: #765734;
   background: rgba(255, 246, 226, 0.9);
 }
