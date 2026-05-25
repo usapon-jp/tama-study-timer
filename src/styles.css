@@ -374,7 +374,7 @@ button:disabled {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -471,7 +471,7 @@ button:disabled {
   width: 34px;
   height: 34px;
   border-radius: 9px;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -1221,7 +1221,7 @@ button:disabled {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -1298,7 +1298,7 @@ button:disabled {
   width: 48px;
   height: 48px;
   border-radius: 12px;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
 }
 
@@ -1338,6 +1338,36 @@ button:disabled {
   gap: 14px;
   overflow: auto;
   padding: 4px 0 12px;
+}
+
+.closet-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 250, 239, 0.86);
+  box-shadow: 0 10px 22px rgba(94, 69, 39, 0.08);
+}
+
+.closet-toolbar span,
+.closet-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #66814a;
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.closet-toolbar button {
+  min-height: 32px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: #fff6e2;
+  color: #765f48;
 }
 
 .outfit-card {
@@ -1407,6 +1437,7 @@ button:disabled {
 
 .zoom {
   position: absolute;
+  z-index: 3;
   top: 10px;
   right: 10px;
   display: grid;

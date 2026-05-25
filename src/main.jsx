@@ -15,6 +15,7 @@ import {
   Plus,
   RotateCcw,
   Settings,
+  Shirt,
   SlidersHorizontal,
   ShoppingBag,
   Sprout,
@@ -38,7 +39,7 @@ const DEFAULT_SUBJECTS = [
   { id: "science", label: "理科", icon: "quest-science.png", color: "#d8b85a" },
   { id: "social", label: "社会", icon: "quest-social.png", color: "#c98766" },
   { id: "japanese", label: "国語", icon: "quest-japanese.png", color: "#d78b9f" },
-  { id: "free", label: "フリー", icon: "nav-quest.png", color: "#9aa897" },
+  { id: "free", label: "フリー", icon: "quest-free.png", color: "#9aa897" },
 ];
 const DEFAULT_CHART_COLORS = {
   math: "#7f985e",
@@ -141,9 +142,12 @@ function normalizeSubjects(rawSubjects) {
       const label = typeof subject?.label === "string" && subject.label.trim()
         ? subject.label.trim().slice(0, 12)
         : defaultSubject?.label || `項目${index + 1}`;
-      const icon = typeof subject?.icon === "string" && subject.icon.trim()
+      const rawIcon = typeof subject?.icon === "string" && subject.icon.trim()
         ? subject.icon
         : defaultSubject?.icon || "nav-quest.png";
+      const icon = defaultSubject && subject.id === defaultSubject.id && rawIcon === "nav-quest.png"
+        ? defaultSubject.icon
+        : rawIcon;
       const color = isHexColor(subject?.color)
         ? subject.color
         : defaultSubject?.color || CHART_COLOR_SWATCHES[index % CHART_COLOR_SWATCHES.length];
@@ -754,6 +758,14 @@ function App() {
               setTab={setTab}
             />
           )}
+          {tab === "closet" && (
+            <ClosetScreen
+              state={state}
+              outfits={OUTFITS}
+              unlockOrSelect={unlockOrSelect}
+              setTab={setTab}
+            />
+          )}
           <BottomNav active={tab} setTab={setTab} />
         </PhoneFrame>
       </div>
@@ -896,7 +908,7 @@ function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startT
       <div className="quick-grid">
         <QuickTile icon={<BookOpen size={24} />} label="記録" onClick={() => setTab("records")} />
         <QuickTile icon={<Trophy size={24} />} label="ごほうび" onClick={() => setTab("wardrobe")} />
-        <QuickTile icon={<ShoppingBag size={24} />} label="衣装" onClick={() => setTab("wardrobe")} />
+        <QuickTile icon={<Shirt size={24} />} label="衣装" onClick={() => setTab("closet")} />
         <QuickTile icon={<Settings size={24} />} label="設定" onClick={() => resetLocal()} />
       </div>
       <p className="soft-line">{subject.label}を少しだけ進めよう。完了するとポイントがもらえるよ。</p>
@@ -1455,7 +1467,7 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
 
   return (
     <div className="screen wardrobe-screen">
-      <TopBar title="ごほうび" points={state.points} onBack={() => setTab("home")} />
+      <TopBar title="ショップ" points={state.points} onBack={() => setTab("home")} />
       <div className="shop-tabs">
         <button className="active" type="button">おようふく</button>
         <button type="button">家具</button>
@@ -1510,6 +1522,63 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
           </section>
         </div>
       )}
+      {previewOutfit && (
+        <div className="outfit-preview-overlay" role="dialog" aria-modal="true" aria-label={`${previewOutfit.name}の拡大表示`}>
+          <button className="preview-scrim" type="button" aria-label="閉じる" onClick={() => setPreviewOutfit(null)} />
+          <section className="outfit-preview-dialog">
+            <button className="icon-button preview-close" type="button" aria-label="閉じる" onClick={() => setPreviewOutfit(null)}>
+              ×
+            </button>
+            <img src={asset(`crops/${previewOutfit.id}.png`)} alt={previewOutfit.name} />
+            <strong>{previewOutfit.name}</strong>
+          </section>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClosetScreen({ state, outfits, unlockOrSelect, setTab }) {
+  const [previewOutfit, setPreviewOutfit] = useState(null);
+  const unlockedOutfits = outfits.filter((outfit) => state.unlockedOutfits.includes(outfit.id));
+
+  return (
+    <div className="screen wardrobe-screen closet-screen">
+      <TopBar title="クローゼット" points={state.points} onBack={() => setTab("home")} />
+      <div className="closet-toolbar">
+        <span><Shirt size={16} />購入済み</span>
+        <button type="button" onClick={() => setTab("wardrobe")}>
+          <ShoppingBag size={15} />
+          ショップ
+        </button>
+      </div>
+      <div className="outfit-grid">
+        {unlockedOutfits.map((outfit) => {
+          const selected = state.selectedOutfitId === outfit.id;
+          return (
+            <article className={`outfit-card ${selected ? "selected" : ""}`} key={outfit.id}>
+              <button
+                className="zoom"
+                type="button"
+                aria-label={`${outfit.name}を大きく表示`}
+                onClick={() => setPreviewOutfit(outfit)}
+              >
+                ⌕
+              </button>
+              <img src={asset(`crops/${outfit.id}.png`)} alt="" />
+              <strong>{outfit.name}</strong>
+              <button
+                className="outfit-action"
+                type="button"
+                onClick={() => unlockOrSelect(outfit)}
+                disabled={selected}
+              >
+                {selected ? "着用中" : "着る"}
+              </button>
+            </article>
+          );
+        })}
+      </div>
       {previewOutfit && (
         <div className="outfit-preview-overlay" role="dialog" aria-modal="true" aria-label={`${previewOutfit.name}の拡大表示`}>
           <button className="preview-scrim" type="button" aria-label="閉じる" onClick={() => setPreviewOutfit(null)} />
