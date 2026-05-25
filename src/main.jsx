@@ -49,6 +49,7 @@ const DEFAULT_CHART_COLORS = {
   japanese: "#d78b9f",
   free: "#9aa897",
 };
+const DEFAULT_DAILY_GOAL_MINUTES = 240;
 const CHART_COLOR_SWATCHES = [
   "#7f985e",
   "#7aa6bd",
@@ -58,6 +59,15 @@ const CHART_COLOR_SWATCHES = [
   "#9aa897",
   "#b49bd4",
   "#8f7b67",
+];
+const BASIC_SUBJECT_COLORS = DEFAULT_SUBJECTS.map((subject) => subject.color);
+const SUBJECT_ICON_OPTIONS = [
+  { icon: "quest-math.png", label: "数学" },
+  { icon: "quest-english.png", label: "英語" },
+  { icon: "quest-science.png", label: "理科" },
+  { icon: "quest-social.png", label: "社会" },
+  { icon: "quest-japanese.png", label: "国語" },
+  { icon: "quest-free.png", label: "フリー" },
 ];
 const OUTFITS = [
   { id: "outfit-n-1", name: "森の勉強服", cost: 0 },
@@ -105,6 +115,7 @@ function defaultState() {
     characterOffset: { x: 0, y: 0 },
     totalMinutes: 0,
     todayMinutes: 0,
+    dailyGoalMinutes: DEFAULT_DAILY_GOAL_MINUTES,
     today: todayKey(),
     streak: 0,
     selectedSubject: "math",
@@ -181,6 +192,7 @@ function normalizeState(raw) {
     characterOffset: raw.characterOffset && typeof raw.characterOffset.x === "number" && typeof raw.characterOffset.y === "number" ? raw.characterOffset : { x: 0, y: 0 },
     today,
     todayMinutes: sameDay ? Number(raw.todayMinutes || 0) : 0,
+    dailyGoalMinutes: normalizeGoalMinutes(raw.dailyGoalMinutes),
     points: Math.max(0, Number(raw.points || 0)),
     totalMinutes: Math.max(0, Number(raw.totalMinutes || 0)),
     streak: Number(raw.streak || 0),
@@ -193,6 +205,11 @@ function normalizeState(raw) {
     sound: { ...base.sound, ...(raw.sound || {}) },
     chartSettings: normalizeChartSettings(raw.chartSettings, subjects, base.chartSettings),
   };
+}
+
+function normalizeGoalMinutes(value) {
+  const minutes = Math.round(Number(value || DEFAULT_DAILY_GOAL_MINUTES));
+  return Number.isFinite(minutes) ? Math.min(720, Math.max(15, minutes)) : DEFAULT_DAILY_GOAL_MINUTES;
 }
 
 function normalizeChartSettings(settings, subjects = DEFAULT_SUBJECTS, baseSettings = defaultState().chartSettings) {
@@ -243,6 +260,15 @@ function formatChartTotal(totalMinutes) {
   if (!hours) return `${minutes}分`;
   if (!minutes) return `${hours}時間`;
   return `${hours}時間${minutes}分`;
+}
+
+function formatChartAxis(totalMinutes) {
+  const safe = Math.max(0, Math.round(totalMinutes || 0));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  if (!hours) return `${minutes}m`;
+  if (!minutes) return `${hours}h`;
+  return `${hours}h${minutes}`;
 }
 
 function dateKeyFor(date) {
@@ -346,6 +372,7 @@ function App() {
   const progress = state.timer.mode === "focus"
     ? 1 - remainingOrElapsed / Math.max(1, state.timer.focusMinutes * 60)
     : Math.min(1, spentSeconds / (25 * 60));
+  const dailyGoalProgress = Math.min(1, (state.todayMinutes || 0) / Math.max(1, state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES));
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -643,6 +670,25 @@ function App() {
     });
   }
 
+  function updateDailyGoal(minutes) {
+    setState((current) => ({
+      ...current,
+      dailyGoalMinutes: normalizeGoalMinutes(minutes),
+    }));
+  }
+
+  function updateSessionSubject(sessionId, subjectId) {
+    setState((current) => {
+      if (!current.subjects.some((subject) => subject.id === subjectId)) return current;
+      return {
+        ...current,
+        sessions: current.sessions.map((session) => (
+          session.id === sessionId ? { ...session, subject: subjectId } : session
+        )),
+      };
+    });
+  }
+
   function addSubject() {
     setState((current) => {
       const subjects = normalizeSubjects(current.subjects);
@@ -652,7 +698,7 @@ function App() {
       const subject = {
         id: `custom-${Date.now()}`,
         label: `項目${nextIndex}`,
-        icon: "nav-quest.png",
+        icon: "quest-free.png",
         color,
       };
       const nextSubjects = [...subjects, subject];
@@ -713,16 +759,18 @@ function App() {
               subjects={subjects}
               outfit={activeOutfit}
               subject={selectedSubject}
-              progress={progress}
+              progress={dailyGoalProgress}
               setTab={setTab}
               startTimer={startTimer}
               setSubject={(id) => setState((current) => ({ ...current, selectedSubject: id }))}
               onTitleChange={updateAppName}
+              updateDailyGoal={updateDailyGoal}
             />
           )}
           {tab === "timer" && (
             <TimerScreen
               state={state}
+              subjects={subjects}
               subject={selectedSubject}
               outfit={activeOutfit}
               displayValue={remainingOrElapsed}
@@ -734,6 +782,7 @@ function App() {
               pauseTimer={pauseTimer}
               resetTimer={resetTimer}
               completeSession={completeSession}
+              setSubject={(id) => setState((current) => ({ ...current, selectedSubject: id }))}
               setTab={setTab}
               sound={state.sound}
               soundPanelOpen={soundPanelOpen}
@@ -744,7 +793,15 @@ function App() {
               updateLayoutOffsets={updateLayoutOffsets}
             />
           )}
-          {tab === "records" && <RecordsScreen state={state} subjects={subjects} setTab={setTab} updateChartSettings={updateChartSettings} />}
+          {tab === "records" && (
+            <RecordsScreen
+              state={state}
+              subjects={subjects}
+              setTab={setTab}
+              updateChartSettings={updateChartSettings}
+              updateSessionSubject={updateSessionSubject}
+            />
+          )}
           {tab === "subjects" && (
             <SubjectEditScreen
               state={state}
@@ -866,7 +923,26 @@ function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSound
   );
 }
 
-function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startTimer, setSubject, onTitleChange }) {
+function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startTimer, setSubject, onTitleChange, updateDailyGoal }) {
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [goalHours, setGoalHours] = useState(String(Math.floor((state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES) / 60)));
+  const [goalMinutes, setGoalMinutes] = useState(String((state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES) % 60));
+  const plantScale = 0.72 + progress * 0.42;
+
+  function openGoalEditor() {
+    const goal = state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES;
+    setGoalHours(String(Math.floor(goal / 60)));
+    setGoalMinutes(String(goal % 60));
+    setGoalOpen(true);
+  }
+
+  function saveGoal() {
+    const hours = Math.max(0, Math.min(12, Math.round(Number(goalHours || 0))));
+    const minutes = Math.max(0, Math.min(59, Math.round(Number(goalMinutes || 0))));
+    updateDailyGoal(hours * 60 + minutes);
+    setGoalOpen(false);
+  }
+
   return (
     <div className="screen home-screen">
       <TopBar
@@ -879,13 +955,55 @@ function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startT
         <div className="hero-copy">
           <span>今日の勉強時間</span>
           <strong>{formatHours(state.todayMinutes)}</strong>
-          <small>目標 04:00:00</small>
+          <button className="goal-edit-button" type="button" onClick={openGoalEditor}>
+            目標 {formatHours(state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES)}
+          </button>
         </div>
         <div className="ring" style={{ "--progress": `${Math.round(progress * 360)}deg` }}>
-          <Sprout size={30} />
+          <span className={progress >= 1 ? "ring-plant bloom" : "ring-plant"} style={{ "--plant-scale": plantScale }}>
+            {progress >= 1 ? "✿" : <Sprout size={30} />}
+          </span>
         </div>
         <img className="home-character" src={asset(`avatar/full/${outfit.id}.png`)} alt="たま" />
       </section>
+      {goalOpen && (
+        <div className="goal-editor-overlay" role="dialog" aria-modal="true" aria-label="目標時間の編集">
+          <button className="settings-scrim" type="button" aria-label="閉じる" onClick={() => setGoalOpen(false)} />
+          <section className="goal-editor-sheet">
+            <div className="sheet-head">
+              <div>
+                <span><Clock3 size={16} />目標時間</span>
+                <small>今日の目標と記録グラフの上限に使います</small>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setGoalOpen(false)} aria-label="閉じる">×</button>
+            </div>
+            <div className="goal-input-row">
+              <label>
+                <span>時間</span>
+                <input type="number" min="0" max="12" inputMode="numeric" value={goalHours} onChange={(event) => setGoalHours(event.target.value)} />
+              </label>
+              <label>
+                <span>分</span>
+                <input type="number" min="0" max="59" inputMode="numeric" value={goalMinutes} onChange={(event) => setGoalMinutes(event.target.value)} />
+              </label>
+            </div>
+            <div className="goal-presets">
+              {[60, 120, 180, 240, 300, 360].map((minutes) => (
+                <button key={minutes} type="button" onClick={() => {
+                  setGoalHours(String(Math.floor(minutes / 60)));
+                  setGoalMinutes(String(minutes % 60));
+                }}>
+                  {formatChartTotal(minutes)}
+                </button>
+              ))}
+            </div>
+            <div className="sheet-actions">
+              <button type="button" onClick={() => setGoalOpen(false)}>キャンセル</button>
+              <button className="primary" type="button" onClick={saveGoal}>保存</button>
+            </div>
+          </section>
+        </div>
+      )}
       <section className="subject-card">
         <div className="section-head">
           <b>今日やること</b>
@@ -932,6 +1050,7 @@ function QuickTile({ icon, label, onClick }) {
 
 function TimerScreen({
   state,
+  subjects,
   subject,
   outfit,
   displayValue,
@@ -943,6 +1062,7 @@ function TimerScreen({
   pauseTimer,
   resetTimer,
   completeSession,
+  setSubject,
   setTab,
   sound,
   soundPanelOpen,
@@ -954,6 +1074,7 @@ function TimerScreen({
 }) {
   const isRunning = state.timer.running;
   const [customFocusOpen, setCustomFocusOpen] = useState(false);
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const [customFocusMinutes, setCustomFocusMinutes] = useState(String(state.timer.focusMinutes || 20));
   const isCustomFocus = !FOCUS_PRESETS.includes(Number(state.timer.focusMinutes));
 
@@ -1071,7 +1192,7 @@ function TimerScreen({
         <button className="icon-button" type="button" onClick={() => setTab("home")} aria-label="戻る">
           <ChevronLeft size={20} />
         </button>
-        <button className="task-pill top-task-pill" type="button">
+        <button className="task-pill top-task-pill" type="button" onClick={() => setSubjectPickerOpen(true)}>
           <img src={subjectIconSrc(subject.icon)} alt="" />
           <span>{subject.label}の勉強をする</span>
           <Pencil size={16} />
@@ -1101,6 +1222,37 @@ function TimerScreen({
           </label>
           <button type="button" onClick={playAlarm}>試す</button>
         </section>
+      )}
+      {subjectPickerOpen && (
+        <div className="subject-picker-overlay" role="dialog" aria-modal="true" aria-label="教科を選ぶ">
+          <button className="settings-scrim" type="button" aria-label="閉じる" onClick={() => setSubjectPickerOpen(false)} />
+          <section className="subject-picker-sheet">
+            <div className="sheet-head">
+              <div>
+                <span><BookOpen size={16} />教科を選ぶ</span>
+                <small>このタイマーで記録する項目です</small>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setSubjectPickerOpen(false)} aria-label="閉じる">×</button>
+            </div>
+            <div className="subject-picker-grid">
+              {subjects.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={state.selectedSubject === item.id ? "active" : ""}
+                  style={{ "--subject-color": item.color }}
+                  onClick={() => {
+                    setSubject(item.id);
+                    setSubjectPickerOpen(false);
+                  }}
+                >
+                  <img src={subjectIconSrc(item.icon)} alt="" />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
       )}
       <div className="mode-switch">
         <button type="button" className={state.timer.mode === "focus" ? "active" : ""} onClick={() => changeMode("focus")}>集中</button>
@@ -1225,6 +1377,11 @@ function TimerScreen({
 }
 
 function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject, deleteSubject }) {
+  const [colorSubjectId, setColorSubjectId] = useState(null);
+  const [iconSubjectId, setIconSubjectId] = useState(null);
+  const colorSubject = subjects.find((subject) => subject.id === colorSubjectId);
+  const iconSubject = subjects.find((subject) => subject.id === iconSubjectId);
+
   return (
     <div className="screen subject-edit-screen">
       <TopBar title="項目編集" points={state.points} onBack={() => setTab("home")} />
@@ -1242,7 +1399,14 @@ function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject,
         <div className="subject-edit-list">
           {subjects.map((subject) => (
             <article className="subject-edit-row" key={subject.id}>
-              <img src={subjectIconSrc(subject.icon)} alt="" />
+              <button
+                className="subject-icon-button"
+                type="button"
+                onClick={() => setIconSubjectId(subject.id)}
+                aria-label={`${subject.label}のアイコンを選ぶ`}
+              >
+                <img src={subjectIconSrc(subject.icon)} alt="" />
+              </button>
               <label>
                 <span>項目名</span>
                 <input
@@ -1253,15 +1417,15 @@ function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject,
                   aria-label={`${subject.label}の名前`}
                 />
               </label>
-              <label className="subject-color-field" style={{ "--subject-color": subject.color }}>
+              <div className="subject-color-field" style={{ "--subject-color": subject.color }}>
                 <span>色</span>
-                <input
-                  type="color"
-                  value={subject.color}
-                  onChange={(event) => updateSubject(subject.id, { color: event.target.value })}
-                  aria-label={`${subject.label}の色`}
+                <button
+                  className="subject-color-swatch"
+                  type="button"
+                  onClick={() => setColorSubjectId(subject.id)}
+                  aria-label={`${subject.label}の色を選ぶ`}
                 />
-              </label>
+              </div>
               <button
                 className="delete-subject-button"
                 type="button"
@@ -1279,12 +1443,81 @@ function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject,
         <Check size={20} />
         完了
       </button>
+      {colorSubject && (
+        <div className="chart-settings-overlay" role="dialog" aria-modal="true" aria-label={`${colorSubject.label}の色を選ぶ`}>
+          <button className="settings-scrim" type="button" aria-label="閉じる" onClick={() => setColorSubjectId(null)} />
+          <section className="chart-settings-sheet compact-picker-sheet">
+            <div className="sheet-head">
+              <div>
+                <span><Palette size={16} />色を選ぶ</span>
+                <small>{colorSubject.label}の表示色を変更します</small>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setColorSubjectId(null)} aria-label="閉じる">×</button>
+            </div>
+            <label className="large-color-picker" style={{ "--subject-color": colorSubject.color }}>
+              <span>自由に調整</span>
+              <input
+                type="color"
+                value={colorSubject.color}
+                onChange={(event) => updateSubject(colorSubject.id, { color: event.target.value })}
+                aria-label={`${colorSubject.label}の色`}
+              />
+            </label>
+            <div className="basic-color-grid" aria-label="基本色">
+              {BASIC_SUBJECT_COLORS.map((color) => (
+                <button
+                  key={color}
+                  className={colorSubject.color.toLowerCase() === color.toLowerCase() ? "active" : ""}
+                  type="button"
+                  style={{ "--swatch-color": color }}
+                  onClick={() => updateSubject(colorSubject.id, { color })}
+                  aria-label={`${color}を選ぶ`}
+                />
+              ))}
+            </div>
+            <div className="sheet-actions single">
+              <button className="primary" type="button" onClick={() => setColorSubjectId(null)}>完了</button>
+            </div>
+          </section>
+        </div>
+      )}
+      {iconSubject && (
+        <div className="chart-settings-overlay" role="dialog" aria-modal="true" aria-label={`${iconSubject.label}のアイコンを選ぶ`}>
+          <button className="settings-scrim" type="button" aria-label="閉じる" onClick={() => setIconSubjectId(null)} />
+          <section className="chart-settings-sheet compact-picker-sheet">
+            <div className="sheet-head">
+              <div>
+                <span><BookOpen size={16} />アイコンを選ぶ</span>
+                <small>{iconSubject.label}のアイコンを変更します</small>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setIconSubjectId(null)} aria-label="閉じる">×</button>
+            </div>
+            <div className="icon-choice-grid">
+              {SUBJECT_ICON_OPTIONS.map((option) => (
+                <button
+                  key={option.icon}
+                  className={iconSubject.icon === option.icon ? "active" : ""}
+                  type="button"
+                  onClick={() => updateSubject(iconSubject.id, { icon: option.icon })}
+                >
+                  <img src={subjectIconSrc(option.icon)} alt="" />
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </div>
+            <div className="sheet-actions single">
+              <button className="primary" type="button" onClick={() => setIconSubjectId(null)}>完了</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
 
-function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
+function RecordsScreen({ state, subjects, setTab, updateChartSettings, updateSessionSubject }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState(null);
   const [visibleWeekStart, setVisibleWeekStart] = useState(() => startOfWeek(new Date()));
   const totalToday = state.sessions.filter((session) => session.date === todayKey()).reduce((sum, session) => sum + session.minutes, 0);
   const currentWeekStart = startOfWeek(new Date());
@@ -1292,8 +1525,9 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
   const weekDays = buildWeeklyChart(state.sessions, subjects, visibleWeekStart);
   const visibleSubjects = subjects.filter((subject) => state.chartSettings.visibleSubjects.includes(subject.id));
   const visibleTotals = weekDays.map((day) => visibleSubjects.reduce((sum, subject) => sum + day.subjects[subject.id], 0));
-  const maxDayTotal = Math.max(60, ...visibleTotals);
+  const chartMaxMinutes = Math.max(60, normalizeGoalMinutes(state.dailyGoalMinutes), ...visibleTotals);
   const weekTotal = visibleTotals.reduce((sum, minutes) => sum + minutes, 0);
+  const editingSession = state.sessions.find((session) => session.id === editingSessionId);
 
   function toggleChartSubject(subjectId) {
     const current = state.chartSettings.visibleSubjects;
@@ -1343,8 +1577,8 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
         </div>
         <div className="weekly-chart" aria-label="1週間分の勉強時間">
           <div className="chart-grid-lines" aria-hidden="true">
-            <span>2h</span>
-            <span>1h</span>
+            <span>{formatChartAxis(chartMaxMinutes)}</span>
+            <span>{formatChartAxis(chartMaxMinutes / 2)}</span>
             <span>0</span>
           </div>
           <div className="chart-bars">
@@ -1353,7 +1587,7 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
               return (
                 <div className="chart-day" key={day.date}>
                   <div className="chart-bar-track">
-                    <div className="chart-stack" style={{ height: `${Math.max(dayTotal ? 8 : 0, (dayTotal / maxDayTotal) * 100)}%` }}>
+                    <div className="chart-stack" style={{ height: `${Math.max(dayTotal ? 8 : 0, (dayTotal / chartMaxMinutes) * 100)}%` }}>
                       {visibleSubjects.map((subject) => {
                         const minutes = day.subjects[subject.id];
                         if (!minutes) return null;
@@ -1433,7 +1667,7 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
         {state.sessions.length === 0 ? (
           <p className="empty">まだ記録はありません。最初の1回を気軽にはじめよう。</p>
         ) : state.sessions.map((session) => {
-          const subject = subjects.find((item) => item.id === session.subject) || { label: "削除済み", icon: "nav-quest.png" };
+          const subject = subjects.find((item) => item.id === session.subject) || { label: "削除済み", icon: "quest-free.png" };
           return (
             <article className="history-card" key={session.id}>
               <img src={subjectIconSrc(subject.icon)} alt="" />
@@ -1441,11 +1675,45 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
                 <strong>{subject.label}</strong>
                 <span>{session.mode === "focus" ? "集中タイマー" : "自由計測"} / {session.minutes}分</span>
               </div>
+              <button type="button" onClick={() => setEditingSessionId(session.id)} aria-label="項目を変更">
+                変更
+              </button>
               <b>+{session.reward} pt</b>
             </article>
           );
         })}
       </div>
+      {editingSession && (
+        <div className="chart-settings-overlay" role="dialog" aria-modal="true" aria-label="記録の項目変更">
+          <button className="settings-scrim" type="button" aria-label="閉じる" onClick={() => setEditingSessionId(null)} />
+          <section className="chart-settings-sheet compact-picker-sheet">
+            <div className="sheet-head">
+              <div>
+                <span><BookOpen size={16} />項目を変更</span>
+                <small>記録後でも教科を直せます</small>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setEditingSessionId(null)} aria-label="閉じる">×</button>
+            </div>
+            <div className="subject-picker-grid">
+              {subjects.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={editingSession.subject === item.id ? "active" : ""}
+                  style={{ "--subject-color": item.color }}
+                  onClick={() => {
+                    updateSessionSubject(editingSession.id, item.id);
+                    setEditingSessionId(null);
+                  }}
+                >
+                  <img src={subjectIconSrc(item.icon)} alt="" />
+                  <span>{item.label}</span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
