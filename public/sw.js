@@ -1,4 +1,4 @@
-const CACHE_NAME = "tama-study-timer-v9";
+const CACHE_NAME = "tama-study-timer-v10";
 const BASE_PATH = "/tama-study-timer/";
 const APP_SHELL = [
   BASE_PATH,

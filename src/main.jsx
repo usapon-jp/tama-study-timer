@@ -73,6 +73,7 @@ const STUDY_IMAGES = {
   "outfit-n-3": "study/full/outfit-n-3.png",
   "outfit-r-1": "study/full/outfit-r-1.png",
 };
+const SUBJECT_ICON_VERSION = "20260525-subject-icons";
 
 function studyImageFor(outfitId) {
   return STUDY_IMAGES[outfitId] || STUDY_IMAGES["outfit-n-1"];
@@ -82,6 +83,10 @@ function asset(path) {
   if (!path) return "";
   const clean = path.startsWith("/assets/") ? path.slice(1) : `assets/${path}`;
   return `${import.meta.env.BASE_URL}${clean}`;
+}
+
+function subjectIconSrc(icon) {
+  return `${asset(`crops/${icon}`)}?v=${SUBJECT_ICON_VERSION}`;
 }
 
 function todayKey() {
@@ -895,7 +900,7 @@ function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startT
               style={{ "--subject-color": item.color }}
               onClick={() => setSubject(item.id)}
             >
-              <img src={asset(`crops/${item.icon}`)} alt="" />
+              <img src={subjectIconSrc(item.icon)} alt="" />
               {item.label}
             </button>
           ))}
@@ -1067,7 +1072,7 @@ function TimerScreen({
           <ChevronLeft size={20} />
         </button>
         <button className="task-pill top-task-pill" type="button">
-          <img src={asset(`crops/${subject.icon}`)} alt="" />
+          <img src={subjectIconSrc(subject.icon)} alt="" />
           <span>{subject.label}の勉強をする</span>
           <Pencil size={16} />
         </button>
@@ -1237,7 +1242,7 @@ function SubjectEditScreen({ state, subjects, setTab, updateSubject, addSubject,
         <div className="subject-edit-list">
           {subjects.map((subject) => (
             <article className="subject-edit-row" key={subject.id}>
-              <img src={asset(`crops/${subject.icon}`)} alt="" />
+              <img src={subjectIconSrc(subject.icon)} alt="" />
               <label>
                 <span>項目名</span>
                 <input
@@ -1410,7 +1415,7 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
                     <span className={`setting-check ${checked ? "checked" : ""}`}>
                       {checked && <Check size={13} />}
                     </span>
-                    <img src={asset(`crops/${subject.icon}`)} alt="" />
+                    <img src={subjectIconSrc(subject.icon)} alt="" />
                     <strong>{subject.label}</strong>
                     <span className="color-chip" style={{ background: state.chartSettings.colors[subject.id] }} />
                   </button>
@@ -1431,7 +1436,7 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings }) {
           const subject = subjects.find((item) => item.id === session.subject) || { label: "削除済み", icon: "nav-quest.png" };
           return (
             <article className="history-card" key={session.id}>
-              <img src={asset(`crops/${subject.icon}`)} alt="" />
+              <img src={subjectIconSrc(subject.icon)} alt="" />
               <div>
                 <strong>{subject.label}</strong>
                 <span>{session.mode === "focus" ? "集中タイマー" : "自由計測"} / {session.minutes}分</span>
