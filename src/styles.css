@@ -373,7 +373,9 @@ button:disabled {
 .subject-row img {
   width: 30px;
   height: 30px;
-  object-fit: contain;
+  border-radius: 8px;
+  object-fit: cover;
+  object-position: center;
 }
 
 .start-button {
@@ -468,7 +470,9 @@ button:disabled {
   align-self: center;
   width: 34px;
   height: 34px;
-  object-fit: contain;
+  border-radius: 9px;
+  object-fit: cover;
+  object-position: center;
 }
 
 .subject-edit-row label {
@@ -1216,7 +1220,9 @@ button:disabled {
 .subject-setting-row img {
   width: 28px;
   height: 28px;
-  object-fit: contain;
+  border-radius: 8px;
+  object-fit: cover;
+  object-position: center;
 }
 
 .subject-setting-row strong {
@@ -1291,7 +1297,9 @@ button:disabled {
 .history-card img {
   width: 48px;
   height: 48px;
-  object-fit: contain;
+  border-radius: 12px;
+  object-fit: cover;
+  object-position: center;
 }
 
 .history-card div {
