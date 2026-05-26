@@ -85,7 +85,7 @@ const STUDY_IMAGES = {
   "outfit-n-3": "study/full/outfit-n-3.png",
   "outfit-r-1": "study/full/outfit-r-1.png",
 };
-const SUBJECT_ICON_VERSION = "20260525-subject-icons";
+const SUBJECT_ICON_VERSION = "20260526-free-icon";
 
 function studyImageFor(outfitId) {
   return STUDY_IMAGES[outfitId] || STUDY_IMAGES["outfit-n-1"];
