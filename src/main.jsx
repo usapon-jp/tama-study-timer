@@ -27,6 +27,8 @@ import "./styles.css";
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 20, 40, 60];
+const COMPLETION_ALARM_MS = 15000;
+const REWARD_TOAST_MS = 1500;
 const STUDY_BGM_TRACKS = [
   "audio/study-bgm-1.mp3",
   "audio/study-bgm-2.mp3",
@@ -358,12 +360,16 @@ function App() {
   const [tab, setTab] = useState("home");
   const [nowTick, setNowTick] = useState(Date.now());
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
+  const [pendingCompletion, setPendingCompletion] = useState(null);
+  const [rewardToast, setRewardToast] = useState(null);
   const audioContextRef = useRef(null);
   const bgmAudioRef = useRef(null);
   const bgmTrackIndexRef = useRef(0);
   const bgmPreviewTimeoutRef = useRef(null);
+  const alarmTimeoutsRef = useRef([]);
+  const pendingAutoTimeoutRef = useRef(null);
+  const rewardToastTimeoutRef = useRef(null);
   const wakeLockRef = useRef(null);
-  const previousSessionCountRef = useRef(state.sessions.length);
   const activeOutfit = OUTFITS.find((item) => item.id === state.selectedOutfitId) || OUTFITS[0];
   const subjects = state.subjects?.length ? state.subjects : DEFAULT_SUBJECTS;
   const selectedSubject = subjects.find((item) => item.id === state.selectedSubject) || subjects[0];
@@ -384,10 +390,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (state.timer.mode === "focus" && state.timer.running && remainingOrElapsed <= 0) {
-      completeSession();
+    if (state.timer.mode === "focus" && state.timer.running && remainingOrElapsed <= 0 && !pendingCompletion) {
+      beginPendingCompletion();
     }
-  }, [remainingOrElapsed, state.timer.mode, state.timer.running]);
+  }, [remainingOrElapsed, state.timer.mode, state.timer.running, pendingCompletion]);
 
   useEffect(() => {
     if (state.sound?.bgm && state.timer.running && tab === "timer") {
@@ -398,11 +404,10 @@ function App() {
   }, [state.sound?.bgm, state.timer.running, tab]);
 
   useEffect(() => {
-    if (state.sessions.length > previousSessionCountRef.current && state.sound?.alarm) {
-      playAlarm();
+    if (tab !== "timer") {
+      stopAlarm();
     }
-    previousSessionCountRef.current = state.sessions.length;
-  }, [state.sessions.length, state.sound?.alarm]);
+  }, [tab]);
 
   useEffect(() => {
     function handleVisibilityChange() {
@@ -416,6 +421,9 @@ function App() {
 
   useEffect(() => () => {
     stopBgm();
+    stopAlarm();
+    clearPendingAutoCompletion();
+    clearRewardToast();
     releaseWakeLock();
   }, []);
 
@@ -503,25 +511,72 @@ function App() {
     lock?.release?.().catch(() => {});
   }
 
-  function playAlarm() {
+  function playAlarm({ durationMs = 0 } = {}) {
     const context = ensureAudioContext();
     if (!context) return;
+    if (durationMs > 0) stopAlarm();
+    const repeats = durationMs > 0 ? Math.max(1, Math.ceil(durationMs / 1300)) : 1;
+    Array.from({ length: repeats }).forEach((_, repeatIndex) => {
+      const timeoutId = durationMs > 0 ? window.setTimeout(() => {
+        playAlarmTone(context, 0);
+      }, repeatIndex * 1300) : null;
+      if (timeoutId) alarmTimeoutsRef.current.push(timeoutId);
+      if (!durationMs && repeatIndex === 0) playAlarmTone(context, 0);
+    });
+    if (durationMs > 0) {
+      const stopId = window.setTimeout(stopAlarm, durationMs);
+      alarmTimeoutsRef.current.push(stopId);
+    }
+  }
+
+  function playAlarmTone(context, startOffset) {
     [0, 0.16, 0.34].forEach((offset, index) => {
       const oscillator = context.createOscillator();
       const gain = context.createGain();
       oscillator.type = "sine";
       oscillator.frequency.value = [784, 988, 1318][index];
-      gain.gain.setValueAtTime(0.0001, context.currentTime + offset);
-      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + offset + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + offset + 0.22);
+      const at = context.currentTime + startOffset + offset;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.16, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
       oscillator.connect(gain);
       gain.connect(context.destination);
-      oscillator.start(context.currentTime + offset);
-      oscillator.stop(context.currentTime + offset + 0.24);
+      oscillator.start(at);
+      oscillator.stop(at + 0.24);
     });
   }
 
+  function stopAlarm() {
+    alarmTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    alarmTimeoutsRef.current = [];
+  }
+
+  function clearPendingAutoCompletion() {
+    if (pendingAutoTimeoutRef.current) {
+      window.clearTimeout(pendingAutoTimeoutRef.current);
+      pendingAutoTimeoutRef.current = null;
+    }
+  }
+
+  function clearRewardToast() {
+    if (rewardToastTimeoutRef.current) {
+      window.clearTimeout(rewardToastTimeoutRef.current);
+      rewardToastTimeoutRef.current = null;
+    }
+  }
+
+  function showRewardToast(reward, afterDone = () => setTab("home")) {
+    clearRewardToast();
+    setRewardToast({ reward, id: `${Date.now()}` });
+    rewardToastTimeoutRef.current = window.setTimeout(() => {
+      setRewardToast(null);
+      rewardToastTimeoutRef.current = null;
+      afterDone();
+    }, REWARD_TOAST_MS);
+  }
+
   function updateSound(nextSound) {
+    if (nextSound.alarm === false) stopAlarm();
     setState((current) => ({ ...current, sound: { ...current.sound, ...nextSound } }));
   }
 
@@ -531,6 +586,7 @@ function App() {
   }
 
   function changeMode(mode) {
+    cancelPendingCompletion();
     setState((current) => ({
       ...current,
       timer: {
@@ -545,6 +601,7 @@ function App() {
   }
 
   function setFocusMinutes(minutes) {
+    cancelPendingCompletion();
     setState((current) => ({
       ...current,
       timer: {
@@ -559,6 +616,7 @@ function App() {
   }
 
   function startTimer() {
+    cancelPendingCompletion();
     setState((current) => ({
       ...current,
       timer: {
@@ -583,6 +641,7 @@ function App() {
   }
 
   function resetTimer() {
+    cancelPendingCompletion();
     setState((current) => ({
       ...current,
       timer: {
@@ -595,38 +654,99 @@ function App() {
     }));
   }
 
-  function completeSession() {
+  function makeCompletionPayload(current) {
+    const seconds = elapsedSeconds(current.timer, Date.now());
+    const minutes = Math.max(1, Math.round(seconds / 60));
+    const reward = rewardFor(minutes);
+    return {
+      id: `${Date.now()}`,
+      date: todayKey(),
+      subject: current.selectedSubject,
+      mode: current.timer.mode,
+      minutes,
+      reward,
+      completedAt: new Date().toISOString(),
+    };
+  }
+
+  function applySession(current, session) {
+    return {
+      ...current,
+      points: current.points + session.reward,
+      todayMinutes: current.todayMinutes + session.minutes,
+      totalMinutes: current.totalMinutes + session.minutes,
+      streak: current.todayMinutes ? current.streak || 1 : Math.max(1, current.streak || 0),
+      sessions: [session, ...current.sessions].slice(0, MAX_STORED_SESSIONS),
+      timer: {
+        ...current.timer,
+        running: false,
+        startedAt: null,
+        elapsedBeforeStart: 0,
+        lastDisplaySeconds: current.timer.mode === "focus" ? current.timer.focusMinutes * 60 : 0,
+      },
+    };
+  }
+
+  function beginPendingCompletion() {
+    let nextPending = null;
     setState((current) => {
-      if (!current.timer.running && elapsedSeconds(current.timer, Date.now()) === 0) return current;
-      const seconds = elapsedSeconds(current.timer, Date.now());
-      const minutes = Math.max(1, Math.round(seconds / 60));
-      const reward = rewardFor(minutes);
-      const session = {
-        id: `${Date.now()}`,
-        date: todayKey(),
-        subject: current.selectedSubject,
-        mode: current.timer.mode,
-        minutes,
-        reward,
-        completedAt: new Date().toISOString(),
-      };
+      if (!current.timer.running || current.timer.mode !== "focus") return current;
+      const session = makeCompletionPayload(current);
+      nextPending = session;
       return {
         ...current,
-        points: current.points + reward,
-        todayMinutes: current.todayMinutes + minutes,
-        totalMinutes: current.totalMinutes + minutes,
-        streak: current.todayMinutes ? current.streak || 1 : Math.max(1, current.streak || 0),
-        sessions: [session, ...current.sessions].slice(0, MAX_STORED_SESSIONS),
         timer: {
           ...current.timer,
           running: false,
           startedAt: null,
-          elapsedBeforeStart: 0,
-          lastDisplaySeconds: current.timer.mode === "focus" ? current.timer.focusMinutes * 60 : 0,
+          elapsedBeforeStart: current.timer.focusMinutes * 60,
+          lastDisplaySeconds: 0,
         },
       };
     });
-    setTab("home");
+    if (!nextPending) return;
+    setPendingCompletion(nextPending);
+    setTab("timer");
+    if (state.sound?.alarm) {
+      playAlarm({ durationMs: COMPLETION_ALARM_MS });
+    }
+    clearPendingAutoCompletion();
+    pendingAutoTimeoutRef.current = window.setTimeout(() => {
+      finalizePendingCompletion(nextPending, "auto");
+    }, COMPLETION_ALARM_MS);
+  }
+
+  function finalizePendingCompletion(session = pendingCompletion, source = "manual") {
+    if (!session) return;
+    stopAlarm();
+    clearPendingAutoCompletion();
+    setPendingCompletion((current) => (current?.id === session.id ? null : current));
+    setState((current) => {
+      if (current.sessions.some((item) => item.id === session.id)) return current;
+      return applySession(current, session);
+    });
+    showRewardToast(session.reward, () => setTab("home"));
+  }
+
+  function cancelPendingCompletion() {
+    stopAlarm();
+    clearPendingAutoCompletion();
+    setPendingCompletion(null);
+  }
+
+  function completeSession() {
+    if (pendingCompletion) {
+      finalizePendingCompletion(pendingCompletion, "manual");
+      return;
+    }
+    let nextSession = null;
+    setState((current) => {
+      if (!current.timer.running && elapsedSeconds(current.timer, Date.now()) === 0) return current;
+      const session = makeCompletionPayload(current);
+      nextSession = session;
+      return applySession(current, session);
+    });
+    if (nextSession) setTab("home");
   }
 
   function unlockOrSelect(outfit) {
@@ -782,6 +902,8 @@ function App() {
               pauseTimer={pauseTimer}
               resetTimer={resetTimer}
               completeSession={completeSession}
+              pendingCompletion={pendingCompletion}
+              rewardToast={rewardToast}
               setSubject={(id) => setState((current) => ({ ...current, selectedSubject: id }))}
               setTab={setTab}
               sound={state.sound}
@@ -1062,6 +1184,8 @@ function TimerScreen({
   pauseTimer,
   resetTimer,
   completeSession,
+  pendingCompletion,
+  rewardToast,
   setSubject,
   setTab,
   sound,
@@ -1073,6 +1197,7 @@ function TimerScreen({
   updateLayoutOffsets,
 }) {
   const isRunning = state.timer.running;
+  const isCompletionPending = Boolean(pendingCompletion);
   const [customFocusOpen, setCustomFocusOpen] = useState(false);
   const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const [customFocusMinutes, setCustomFocusMinutes] = useState(String(state.timer.focusMinutes || 20));
@@ -1359,19 +1484,29 @@ function TimerScreen({
         )}
       </section>
       <div className="timer-actions">
-        {!isRunning ? (
+        {isCompletionPending ? (
+          <button className="pill-action primary get-ready" type="button" onClick={completeSession}><Check size={18} />完了してGET</button>
+        ) : !isRunning ? (
           <button className="pill-action primary" type="button" onClick={startTimer}><CirclePlay size={19} />開始</button>
         ) : (
           <button className="pill-action primary" type="button" onClick={pauseTimer}><CirclePause size={19} />一時停止</button>
         )}
-        <button className="pill-action" type="button" onClick={completeSession} disabled={spentSeconds < 10}><Check size={18} />完了</button>
+        {!isCompletionPending && (
+          <button className="pill-action" type="button" onClick={completeSession} disabled={spentSeconds < 10}><Check size={18} />完了</button>
+        )}
         <button className="round-action" type="button" onClick={resetTimer} aria-label="リセット"><RotateCcw size={18} /></button>
       </div>
       <div className="bonus-card">
-        <span><Sprout size={17} />獲得ポイント</span>
-        <b>+{rewardFor(Math.max(1, Math.round(spentSeconds / 60)))} pt</b>
+        <span><Sprout size={17} />{isCompletionPending ? "アラーム中" : "獲得ポイント"}</span>
+        <b>+{isCompletionPending ? pendingCompletion.reward : rewardFor(Math.max(1, Math.round(spentSeconds / 60)))} pt</b>
         <progress value={Math.min(100, Math.round(progress * 100))} max="100" />
       </div>
+      {rewardToast && (
+        <div className="reward-get-toast" role="status" aria-live="polite">
+          <span>+{rewardToast.reward}pt</span>
+          <strong>GET</strong>
+        </div>
+      )}
     </div>
   );
 }
