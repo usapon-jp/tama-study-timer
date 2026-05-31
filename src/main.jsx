@@ -27,7 +27,7 @@ import "./styles.css";
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 20, 40, 60];
-const COMPLETION_ALARM_MS = 15000;
+const COMPLETION_ALARM_MS = 10000;
 const REWARD_TOAST_MS = 1500;
 const STUDY_BGM_TRACKS = [
   "audio/study-bgm-1.mp3",
@@ -346,6 +346,10 @@ function elapsedSeconds(timer, nowTick) {
   return Math.max(0, Number(timer.elapsedBeforeStart || 0) + elapsedRunning);
 }
 
+function focusDurationSeconds(timer) {
+  return Math.max(1, Number(timer.focusMinutes || 20) * 60);
+}
+
 function rewardFor(minutes) {
   return Math.max(0, Math.round(Number(minutes || 0)));
 }
@@ -375,8 +379,11 @@ function App() {
   const selectedSubject = subjects.find((item) => item.id === state.selectedSubject) || subjects[0];
   const remainingOrElapsed = displaySeconds(state.timer, nowTick);
   const spentSeconds = elapsedSeconds(state.timer, nowTick);
+  const focusDuration = focusDurationSeconds(state.timer);
+  const focusOvertimeSeconds = state.timer.mode === "focus" ? Math.max(0, spentSeconds - focusDuration) : 0;
+  const timerDisplayValue = state.timer.mode === "focus" && focusOvertimeSeconds > 0 ? focusOvertimeSeconds : remainingOrElapsed;
   const progress = state.timer.mode === "focus"
-    ? 1 - remainingOrElapsed / Math.max(1, state.timer.focusMinutes * 60)
+    ? Math.min(1, spentSeconds / focusDuration)
     : Math.min(1, spentSeconds / (25 * 60));
   const dailyGoalProgress = Math.min(1, (state.todayMinutes || 0) / Math.max(1, state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES));
 
@@ -688,23 +695,12 @@ function App() {
   }
 
   function beginPendingCompletion() {
-    let nextPending = null;
-    setState((current) => {
-      if (!current.timer.running || current.timer.mode !== "focus") return current;
-      const session = makeCompletionPayload(current);
-      nextPending = session;
-      return {
-        ...current,
-        timer: {
-          ...current.timer,
-          running: false,
-          startedAt: null,
-          elapsedBeforeStart: current.timer.focusMinutes * 60,
-          lastDisplaySeconds: 0,
-        },
-      };
-    });
-    if (!nextPending) return;
+    if (!state.timer.running || state.timer.mode !== "focus") return;
+    const nextPending = {
+      id: `${Date.now()}`,
+      startedAt: new Date().toISOString(),
+      acknowledged: false,
+    };
     setPendingCompletion(nextPending);
     setTab("timer");
     if (state.sound?.alarm) {
@@ -712,20 +708,32 @@ function App() {
     }
     clearPendingAutoCompletion();
     pendingAutoTimeoutRef.current = window.setTimeout(() => {
-      finalizePendingCompletion(nextPending, "auto");
+      stopAlarm();
+      setPendingCompletion((current) => (
+        current?.id === nextPending.id ? { ...current, acknowledged: true } : current
+      ));
+      pendingAutoTimeoutRef.current = null;
     }, COMPLETION_ALARM_MS);
   }
 
-  function finalizePendingCompletion(session = pendingCompletion, source = "manual") {
+  function finalizePendingCompletion(session = pendingCompletion) {
     if (!session) return;
+    const completedSession = makeCompletionPayload(state);
     stopAlarm();
     clearPendingAutoCompletion();
     setPendingCompletion((current) => (current?.id === session.id ? null : current));
     setState((current) => {
-      if (current.sessions.some((item) => item.id === session.id)) return current;
-      return applySession(current, session);
+      return applySession(current, completedSession);
     });
-    showRewardToast(session.reward, () => setTab("home"));
+    showRewardToast(completedSession.reward, () => setTab("home"));
+  }
+
+  function continueAfterAlarm() {
+    stopAlarm();
+    clearPendingAutoCompletion();
+    setPendingCompletion((current) => (
+      current ? { ...current, acknowledged: true } : current
+    ));
   }
 
   function cancelPendingCompletion() {
@@ -736,7 +744,7 @@ function App() {
 
   function completeSession() {
     if (pendingCompletion) {
-      finalizePendingCompletion(pendingCompletion, "manual");
+      finalizePendingCompletion(pendingCompletion);
       return;
     }
     let nextSession = null;
@@ -893,8 +901,9 @@ function App() {
               subjects={subjects}
               subject={selectedSubject}
               outfit={activeOutfit}
-              displayValue={remainingOrElapsed}
+              displayValue={timerDisplayValue}
               spentSeconds={spentSeconds}
+              overtimeSeconds={focusOvertimeSeconds}
               progress={progress}
               changeMode={changeMode}
               setFocusMinutes={setFocusMinutes}
@@ -902,6 +911,7 @@ function App() {
               pauseTimer={pauseTimer}
               resetTimer={resetTimer}
               completeSession={completeSession}
+              continueAfterAlarm={continueAfterAlarm}
               pendingCompletion={pendingCompletion}
               rewardToast={rewardToast}
               setSubject={(id) => setState((current) => ({ ...current, selectedSubject: id }))}
@@ -1177,6 +1187,7 @@ function TimerScreen({
   outfit,
   displayValue,
   spentSeconds,
+  overtimeSeconds,
   progress,
   changeMode,
   setFocusMinutes,
@@ -1184,6 +1195,7 @@ function TimerScreen({
   pauseTimer,
   resetTimer,
   completeSession,
+  continueAfterAlarm,
   pendingCompletion,
   rewardToast,
   setSubject,
@@ -1198,6 +1210,8 @@ function TimerScreen({
 }) {
   const isRunning = state.timer.running;
   const isCompletionPending = Boolean(pendingCompletion);
+  const isOvertime = state.timer.mode === "focus" && overtimeSeconds > 0;
+  const isAlarmChoiceOpen = isCompletionPending && !pendingCompletion?.acknowledged;
   const [customFocusOpen, setCustomFocusOpen] = useState(false);
   const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const [customFocusMinutes, setCustomFocusMinutes] = useState(String(state.timer.focusMinutes || 20));
@@ -1449,7 +1463,7 @@ function TimerScreen({
           onPointerCancel={handleElementPointerUp}
         >
           <span>{formatTime(displayValue)}</span>
-          <small>{state.timer.mode === "focus" ? "残り時間" : "経過時間"}</small>
+          <small>{isOvertime ? "超過時間" : state.timer.mode === "focus" ? "残り時間" : "経過時間"}</small>
         </div>
         <img className="desk-bg" src={asset("crops/home-bg.png")} alt="" draggable="false" onDragStart={(e) => e.preventDefault()} />
         <img
@@ -1484,21 +1498,24 @@ function TimerScreen({
         )}
       </section>
       <div className="timer-actions">
-        {isCompletionPending ? (
-          <button className="pill-action primary get-ready" type="button" onClick={completeSession}><Check size={18} />完了してGET</button>
+        {isAlarmChoiceOpen ? (
+          <>
+            <button className="pill-action primary get-ready" type="button" onClick={completeSession}><Check size={18} />完了</button>
+            <button className="pill-action continue" type="button" onClick={continueAfterAlarm}><CirclePlay size={18} />追加継続</button>
+          </>
         ) : !isRunning ? (
           <button className="pill-action primary" type="button" onClick={startTimer}><CirclePlay size={19} />開始</button>
         ) : (
           <button className="pill-action primary" type="button" onClick={pauseTimer}><CirclePause size={19} />一時停止</button>
         )}
-        {!isCompletionPending && (
+        {!isAlarmChoiceOpen && (
           <button className="pill-action" type="button" onClick={completeSession} disabled={spentSeconds < 10}><Check size={18} />完了</button>
         )}
         <button className="round-action" type="button" onClick={resetTimer} aria-label="リセット"><RotateCcw size={18} /></button>
       </div>
       <div className="bonus-card">
-        <span><Sprout size={17} />{isCompletionPending ? "アラーム中" : "獲得ポイント"}</span>
-        <b>+{isCompletionPending ? pendingCompletion.reward : rewardFor(Math.max(1, Math.round(spentSeconds / 60)))} pt</b>
+        <span><Sprout size={17} />{isAlarmChoiceOpen ? "アラーム中" : isOvertime ? "追加計測中" : "獲得ポイント"}</span>
+        <b>+{rewardFor(Math.max(1, Math.round(spentSeconds / 60)))} pt</b>
         <progress value={Math.min(100, Math.round(progress * 100))} max="100" />
       </div>
       {rewardToast && (
