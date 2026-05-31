@@ -430,6 +430,14 @@ function createAudioContext() {
   return AudioContextClass ? new AudioContextClass() : null;
 }
 
+function inferBgmKind(file) {
+  const type = file?.type || "";
+  const name = (file?.name || "").toLowerCase();
+  if (type.startsWith("video/") || /\.(mov|mp4|m4v|webm)$/i.test(name)) return "video";
+  if (type.startsWith("audio/") || /\.(mp3|m4a|aac|wav|ogg|oga|flac)$/i.test(name)) return "audio";
+  return "";
+}
+
 function openBgmDb() {
   return new Promise((resolve, reject) => {
     if (!("indexedDB" in window)) {
@@ -498,6 +506,19 @@ async function deleteBgmBlob(trackId) {
   });
 }
 
+function deleteBgmDb() {
+  return new Promise((resolve) => {
+    if (!("indexedDB" in window)) {
+      resolve();
+      return;
+    }
+    const request = indexedDB.deleteDatabase(BGM_DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => resolve();
+    request.onblocked = () => resolve();
+  });
+}
+
 function App() {
   const [state, setState] = useState(loadState);
   const [tab, setTab] = useState("home");
@@ -529,6 +550,7 @@ function App() {
     ? Math.min(1, spentSeconds / focusDuration)
     : Math.min(1, spentSeconds / (25 * 60));
   const dailyGoalProgress = Math.min(1, (state.todayMinutes || 0) / Math.max(1, state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES));
+  const bgmPlaylistSignature = JSON.stringify(state.sound?.playlists || []);
 
   useEffect(() => {
     stateRef.current = state;
@@ -565,7 +587,7 @@ function App() {
     if (state.sound?.bgm && state.timer.running && tab === "timer") {
       startBgm();
     }
-  }, [state.sound?.selectedPlaylistId]);
+  }, [state.sound?.selectedPlaylistId, bgmPlaylistSignature]);
 
   useEffect(() => {
     if (tab !== "timer") {
@@ -876,19 +898,21 @@ function App() {
   }
 
   async function addBgmFiles(files, playlistId) {
-    const selectedFiles = Array.from(files || []).filter((file) => file.type.startsWith("audio/") || file.type.startsWith("video/"));
+    const selectedFiles = Array.from(files || [])
+      .map((file) => ({ file, kind: inferBgmKind(file) }))
+      .filter((item) => item.kind);
     if (!selectedFiles.length) {
       setBgmLibraryMessage("音楽または画面録画ファイルを選んでください");
       return;
     }
     const addedTracks = [];
     try {
-      for (const file of selectedFiles) {
+      for (const { file, kind } of selectedFiles) {
         const id = `custom-bgm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const track = {
           id,
           name: file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "追加BGM",
-          kind: file.type.startsWith("video/") ? "video" : "audio",
+          kind,
           type: "custom",
           mimeType: file.type,
           createdAt: new Date().toISOString(),
@@ -2573,7 +2597,8 @@ function BottomNav({ active, setTab }) {
   );
 }
 
-function resetLocal() {
+async function resetLocal() {
+  await deleteBgmDb();
   localStorage.removeItem(STORAGE_KEY);
   window.location.reload();
 }
