@@ -770,6 +770,249 @@ button:disabled {
   font-weight: 950;
 }
 
+.settings-screen,
+.bgm-library-screen {
+  gap: 14px;
+}
+
+.settings-card,
+.bgm-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: rgba(255, 250, 238, 0.86);
+  box-shadow: 0 12px 24px rgba(81, 58, 32, 0.08);
+}
+
+.settings-row-button {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 12px;
+  border: 1px solid rgba(208, 179, 132, 0.42);
+  border-radius: 18px;
+  background: rgba(255, 253, 247, 0.84);
+  color: #604931;
+  text-align: left;
+}
+
+.settings-row-button > svg {
+  transform: rotate(180deg);
+  color: #8a735d;
+}
+
+.settings-row-button.warning {
+  grid-template-columns: 46px minmax(0, 1fr);
+  background: rgba(255, 246, 238, 0.78);
+}
+
+.settings-row-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
+  background: #eff4df;
+  color: #6d874f;
+}
+
+.settings-row-button strong,
+.settings-row-button small {
+  display: block;
+}
+
+.settings-row-button strong {
+  font-size: 0.92rem;
+  font-weight: 950;
+}
+
+.settings-row-button small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.playlist-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.playlist-tabs button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #fff6e2;
+  color: #765f48;
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.playlist-tabs button.active {
+  color: #fff;
+  background: linear-gradient(180deg, #8da76f, #6b854f);
+}
+
+.playlist-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.playlist-editor label {
+  display: grid;
+  gap: 5px;
+  color: #765f48;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.playlist-editor input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(208, 179, 132, 0.72);
+  border-radius: 14px;
+  background: rgba(255, 253, 247, 0.88);
+  color: #4f3d2c;
+  font: inherit;
+  font-weight: 900;
+  padding: 8px 11px;
+}
+
+.delete-playlist,
+.small-note {
+  color: #9a6a4d;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.delete-playlist {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 38px;
+  padding: 8px 11px;
+  border-radius: 999px;
+  background: #fff0e6;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.bgm-message {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 14px;
+  background: #eff4df;
+  color: #5e7544;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.bgm-track-list,
+.bgm-catalog {
+  display: grid;
+  gap: 8px;
+}
+
+.bgm-catalog h3 {
+  margin: 6px 0 0;
+  color: #765f48;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.bgm-track-row,
+.bgm-catalog-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 56px;
+  padding: 8px;
+  border: 1px solid rgba(208, 179, 132, 0.38);
+  border-radius: 16px;
+  background: rgba(255, 253, 247, 0.82);
+}
+
+.bgm-catalog-row {
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+}
+
+.track-kind {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: #fff6e2;
+  color: #6d874f;
+}
+
+.bgm-track-row div,
+.bgm-catalog-row div {
+  min-width: 0;
+}
+
+.bgm-track-row strong,
+.bgm-catalog-row strong,
+.bgm-track-row small,
+.bgm-catalog-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bgm-track-row strong,
+.bgm-catalog-row strong {
+  color: #4f3d2c;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.bgm-track-row small,
+.bgm-catalog-row small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.bgm-track-row button,
+.bgm-catalog-row button {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #eff4df;
+  color: #5e7544;
+  font-size: 0.72rem;
+  font-weight: 950;
+}
+
+.bgm-catalog-row .danger-icon,
+.bgm-track-row button:last-child {
+  background: #fff0e6;
+  color: #a25d3d;
+}
+
+.empty.compact {
+  margin: 8px 0;
+  font-size: 0.78rem;
+}
+
 .focus-scene {
   position: relative;
   flex: 1;

@@ -2,13 +2,17 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { registerServiceWorker } from "./registerServiceWorker";
 import {
+  ArrowDown,
+  ArrowUp,
   BookOpen,
   Check,
   ChevronLeft,
   CirclePause,
   CirclePlay,
   Clock3,
+  FileMusic,
   Home,
+  ListMusic,
   Music2,
   Palette,
   Pencil,
@@ -21,6 +25,7 @@ import {
   Sprout,
   Trash2,
   Trophy,
+  Upload,
 } from "lucide-react";
 import "./styles.css";
 
@@ -29,12 +34,17 @@ const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 20, 40, 60];
 const COMPLETION_ALARM_MS = 10000;
 const REWARD_TOAST_MS = 1500;
-const STUDY_BGM_TRACKS = [
-  "audio/study-bgm-1.mp3",
-  "audio/study-bgm-2.mp3",
-  "audio/study-bgm-3.mp3",
-  "audio/study-bgm-4.mp3",
-].map(asset);
+const BGM_DB_NAME = "tama-study-timer-bgm";
+const BGM_DB_VERSION = 1;
+const BGM_STORE_NAME = "tracks";
+const STANDARD_BGM_TRACKS = [
+  { id: "standard-bgm-1", name: "標準BGM 1", kind: "audio", type: "standard", src: "audio/study-bgm-1.mp3", mimeType: "audio/mpeg" },
+  { id: "standard-bgm-2", name: "標準BGM 2", kind: "audio", type: "standard", src: "audio/study-bgm-2.mp3", mimeType: "audio/mpeg" },
+  { id: "standard-bgm-3", name: "標準BGM 3", kind: "audio", type: "standard", src: "audio/study-bgm-3.mp3", mimeType: "audio/mpeg" },
+  { id: "standard-bgm-4", name: "標準BGM 4", kind: "audio", type: "standard", src: "audio/study-bgm-4.mp3", mimeType: "audio/mpeg" },
+].map((track) => ({ ...track, src: asset(track.src) }));
+const STANDARD_BGM_TRACK_IDS = STANDARD_BGM_TRACKS.map((track) => track.id);
+const DEFAULT_BGM_PLAYLIST_ID = "playlist-default";
 const DEFAULT_SUBJECTS = [
   { id: "math", label: "数学", icon: "quest-math.png", color: "#7f985e" },
   { id: "english", label: "英語", icon: "quest-english.png", color: "#7aa6bd" },
@@ -136,6 +146,15 @@ function defaultState() {
     sound: {
       bgm: false,
       alarm: true,
+      selectedPlaylistId: DEFAULT_BGM_PLAYLIST_ID,
+      playlists: [
+        {
+          id: DEFAULT_BGM_PLAYLIST_ID,
+          name: "いつものBGM",
+          trackIds: STANDARD_BGM_TRACK_IDS,
+        },
+      ],
+      customTracks: [],
     },
     chartSettings: {
       visibleSubjects: DEFAULT_SUBJECTS.map((subject) => subject.id),
@@ -204,7 +223,7 @@ function normalizeState(raw) {
     unlockedOutfits: unlocked,
     sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, MAX_STORED_SESSIONS) : [],
     timer: { ...base.timer, ...(raw.timer || {}) },
-    sound: { ...base.sound, ...(raw.sound || {}) },
+    sound: normalizeSound(raw.sound, base.sound),
     chartSettings: normalizeChartSettings(raw.chartSettings, subjects, base.chartSettings),
   };
 }
@@ -230,6 +249,58 @@ function normalizeChartSettings(settings, subjects = DEFAULT_SUBJECTS, baseSetti
   return {
     visibleSubjects: visible.length ? visible : [subjects[0].id],
     colors,
+  };
+}
+
+function normalizeSound(rawSound, baseSound = defaultState().sound) {
+  const rawTracks = Array.isArray(rawSound?.customTracks) ? rawSound.customTracks : [];
+  const seenTracks = new Set();
+  const customTracks = rawTracks
+    .map((track) => {
+      const id = typeof track?.id === "string" && track.id.trim() ? track.id.trim() : "";
+      if (!id || seenTracks.has(id)) return null;
+      seenTracks.add(id);
+      const name = typeof track?.name === "string" && track.name.trim() ? track.name.trim().slice(0, 80) : "追加BGM";
+      const kind = track?.kind === "video" ? "video" : "audio";
+      const mimeType = typeof track?.mimeType === "string" ? track.mimeType : "";
+      const createdAt = typeof track?.createdAt === "string" ? track.createdAt : new Date().toISOString();
+      return { id, name, kind, type: "custom", mimeType, createdAt };
+    })
+    .filter(Boolean)
+    .slice(0, 80);
+  const validTrackIds = new Set([...STANDARD_BGM_TRACK_IDS, ...customTracks.map((track) => track.id)]);
+  const rawPlaylists = Array.isArray(rawSound?.playlists) ? rawSound.playlists : [];
+  const seenPlaylists = new Set();
+  const playlists = rawPlaylists
+    .map((playlist, index) => {
+      const id = typeof playlist?.id === "string" && playlist.id.trim() ? playlist.id.trim() : `playlist-${index + 1}`;
+      if (seenPlaylists.has(id)) return null;
+      seenPlaylists.add(id);
+      const name = typeof playlist?.name === "string" && playlist.name.trim() ? playlist.name.trim().slice(0, 30) : `プレイリスト${index + 1}`;
+      const trackIds = Array.isArray(playlist?.trackIds)
+        ? playlist.trackIds.filter((trackId) => validTrackIds.has(trackId))
+        : [];
+      return { id, name, trackIds };
+    })
+    .filter(Boolean);
+  if (!playlists.some((playlist) => playlist.id === DEFAULT_BGM_PLAYLIST_ID)) {
+    playlists.unshift({
+      id: DEFAULT_BGM_PLAYLIST_ID,
+      name: "いつものBGM",
+      trackIds: STANDARD_BGM_TRACK_IDS,
+    });
+  }
+  const selectedPlaylistId = playlists.some((playlist) => playlist.id === rawSound?.selectedPlaylistId)
+    ? rawSound.selectedPlaylistId
+    : playlists[0].id;
+  return {
+    ...baseSound,
+    ...(rawSound || {}),
+    bgm: Boolean(rawSound?.bgm),
+    alarm: rawSound?.alarm !== false,
+    selectedPlaylistId,
+    playlists,
+    customTracks,
   };
 }
 
@@ -359,6 +430,74 @@ function createAudioContext() {
   return AudioContextClass ? new AudioContextClass() : null;
 }
 
+function openBgmDb() {
+  return new Promise((resolve, reject) => {
+    if (!("indexedDB" in window)) {
+      reject(new Error("このブラウザでは端末保存を使えません"));
+      return;
+    }
+    const request = indexedDB.open(BGM_DB_NAME, BGM_DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(BGM_STORE_NAME)) {
+        db.createObjectStore(BGM_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("BGM保存を開けませんでした"));
+  });
+}
+
+async function putBgmBlob(trackId, blob) {
+  const db = await openBgmDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(BGM_STORE_NAME, "readwrite");
+    transaction.objectStore(BGM_STORE_NAME).put(blob, trackId);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error("BGMを保存できませんでした"));
+    };
+  });
+}
+
+async function getBgmBlob(trackId) {
+  const db = await openBgmDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(BGM_STORE_NAME, "readonly");
+    const request = transaction.objectStore(BGM_STORE_NAME).get(trackId);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => {
+      db.close();
+      reject(request.error || new Error("BGMを読み込めませんでした"));
+    };
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error("BGMを読み込めませんでした"));
+    };
+  });
+}
+
+async function deleteBgmBlob(trackId) {
+  const db = await openBgmDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(BGM_STORE_NAME, "readwrite");
+    transaction.objectStore(BGM_STORE_NAME).delete(trackId);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error("BGMを削除できませんでした"));
+    };
+  });
+}
+
 function App() {
   const [state, setState] = useState(loadState);
   const [tab, setTab] = useState("home");
@@ -366,9 +505,13 @@ function App() {
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const [pendingCompletion, setPendingCompletion] = useState(null);
   const [rewardToast, setRewardToast] = useState(null);
+  const [bgmLibraryMessage, setBgmLibraryMessage] = useState("");
+  const stateRef = useRef(state);
   const audioContextRef = useRef(null);
   const bgmAudioRef = useRef(null);
   const bgmTrackIndexRef = useRef(0);
+  const bgmCurrentTrackIdRef = useRef(null);
+  const bgmObjectUrlRef = useRef(null);
   const bgmPreviewTimeoutRef = useRef(null);
   const alarmTimeoutsRef = useRef([]);
   const pendingAutoTimeoutRef = useRef(null);
@@ -388,6 +531,7 @@ function App() {
   const dailyGoalProgress = Math.min(1, (state.todayMinutes || 0) / Math.max(1, state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES));
 
   useEffect(() => {
+    stateRef.current = state;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
@@ -411,6 +555,19 @@ function App() {
   }, [state.sound?.bgm, state.timer.running, tab]);
 
   useEffect(() => {
+    bgmTrackIndexRef.current = 0;
+    bgmCurrentTrackIdRef.current = null;
+    if (bgmAudioRef.current) bgmAudioRef.current.pause();
+    if (bgmObjectUrlRef.current) {
+      URL.revokeObjectURL(bgmObjectUrlRef.current);
+      bgmObjectUrlRef.current = null;
+    }
+    if (state.sound?.bgm && state.timer.running && tab === "timer") {
+      startBgm();
+    }
+  }, [state.sound?.selectedPlaylistId]);
+
+  useEffect(() => {
     if (tab !== "timer") {
       stopAlarm();
     }
@@ -428,6 +585,7 @@ function App() {
 
   useEffect(() => () => {
     stopBgm();
+    if (bgmObjectUrlRef.current) URL.revokeObjectURL(bgmObjectUrlRef.current);
     stopAlarm();
     clearPendingAutoCompletion();
     clearRewardToast();
@@ -444,47 +602,100 @@ function App() {
     return audioContextRef.current;
   }
 
-  function ensureBgmAudio() {
-    if (!bgmAudioRef.current) {
-      const audio = new Audio(STUDY_BGM_TRACKS[bgmTrackIndexRef.current]);
-      audio.loop = false;
-      audio.volume = 0.28;
-      audio.preload = "auto";
-      audio.addEventListener("ended", () => {
-        bgmTrackIndexRef.current = (bgmTrackIndexRef.current + 1) % STUDY_BGM_TRACKS.length;
-        audio.src = STUDY_BGM_TRACKS[bgmTrackIndexRef.current];
-        audio.play().catch(() => {
-          // Mobile browsers can pause background media until the page is active again.
-        });
-      });
-      bgmAudioRef.current = audio;
+  function allBgmTracks(current = stateRef.current) {
+    return [...STANDARD_BGM_TRACKS, ...(current.sound?.customTracks || [])];
+  }
+
+  function selectedBgmTrackIds(current = stateRef.current) {
+    const sound = current.sound || {};
+    const playlist = (sound.playlists || []).find((item) => item.id === sound.selectedPlaylistId) || sound.playlists?.[0];
+    const ids = Array.isArray(playlist?.trackIds) ? playlist.trackIds : [];
+    const validIds = new Set(allBgmTracks(current).map((track) => track.id));
+    return ids.filter((id) => validIds.has(id));
+  }
+
+  function findBgmTrack(trackId, current = stateRef.current) {
+    return allBgmTracks(current).find((track) => track.id === trackId) || null;
+  }
+
+  function createBgmMediaElement(kind) {
+    const media = document.createElement(kind === "video" ? "video" : "audio");
+    media.loop = false;
+    media.volume = 0.28;
+    media.preload = "auto";
+    media.playsInline = true;
+    media.addEventListener("ended", () => {
+      playNextBgmTrack();
+    });
+    bgmAudioRef.current = media;
+    return media;
+  }
+
+  async function resolveBgmSrc(track) {
+    if (!track) throw new Error("BGMが見つかりません");
+    if (track.type === "standard") return track.src;
+    const blob = await getBgmBlob(track.id);
+    if (!blob) throw new Error("端末内のBGMファイルを読み込めませんでした");
+    if (bgmObjectUrlRef.current) URL.revokeObjectURL(bgmObjectUrlRef.current);
+    bgmObjectUrlRef.current = URL.createObjectURL(blob);
+    return bgmObjectUrlRef.current;
+  }
+
+  async function prepareBgmMedia(track) {
+    let media = bgmAudioRef.current;
+    if (!media || (track.kind === "video" && media.tagName !== "VIDEO") || (track.kind !== "video" && media.tagName !== "AUDIO")) {
+      if (media) media.pause();
+      media = createBgmMediaElement(track.kind);
     }
-    return bgmAudioRef.current;
+    if (bgmCurrentTrackIdRef.current !== track.id) {
+      media.src = await resolveBgmSrc(track);
+      bgmCurrentTrackIdRef.current = track.id;
+      media.currentTime = 0;
+    }
+    return media;
+  }
+
+  async function playBgmAtIndex(index = bgmTrackIndexRef.current) {
+    const ids = selectedBgmTrackIds();
+    if (!ids.length) return;
+    const safeIndex = ((index % ids.length) + ids.length) % ids.length;
+    bgmTrackIndexRef.current = safeIndex;
+    const track = findBgmTrack(ids[safeIndex]);
+    const media = await prepareBgmMedia(track);
+    await media.play();
+  }
+
+  function playNextBgmTrack() {
+    const ids = selectedBgmTrackIds();
+    if (!ids.length) return;
+    playBgmAtIndex((bgmTrackIndexRef.current + 1) % ids.length).catch(() => {
+      // Mobile browsers can pause background media until the page is active again.
+    });
   }
 
   function startBgm() {
     ensureAudioContext();
-    const audio = ensureBgmAudio();
     requestWakeLock();
-    audio.play().catch(() => {
+    playBgmAtIndex().catch(() => {
       // Mobile browsers require a user gesture before audio can start.
     });
   }
 
   function playBgmPreview() {
     ensureAudioContext();
-    const audio = ensureBgmAudio();
     if (bgmPreviewTimeoutRef.current) {
       window.clearTimeout(bgmPreviewTimeoutRef.current);
       bgmPreviewTimeoutRef.current = null;
     }
-    audio.currentTime = 0;
-    audio.play().catch(() => {
+    bgmTrackIndexRef.current = 0;
+    playBgmAtIndex(0).then(() => {
+      if (bgmAudioRef.current) bgmAudioRef.current.currentTime = 0;
+    }).catch(() => {
       // Mobile browsers require a user gesture before audio can start.
     });
     if (!(state.sound?.bgm && state.timer.running && tab === "timer")) {
       bgmPreviewTimeoutRef.current = window.setTimeout(() => {
-        audio.pause();
+        bgmAudioRef.current?.pause();
         bgmPreviewTimeoutRef.current = null;
       }, 8000);
     }
@@ -585,6 +796,136 @@ function App() {
   function updateSound(nextSound) {
     if (nextSound.alarm === false) stopAlarm();
     setState((current) => ({ ...current, sound: { ...current.sound, ...nextSound } }));
+  }
+
+  function updateBgmSound(updater) {
+    setState((current) => ({
+      ...current,
+      sound: normalizeSound(updater(current.sound || {})),
+    }));
+  }
+
+  function selectBgmPlaylist(playlistId) {
+    updateBgmSound((sound) => ({ ...sound, selectedPlaylistId: playlistId }));
+  }
+
+  function createBgmPlaylist() {
+    const id = `playlist-${Date.now()}`;
+    updateBgmSound((sound) => ({
+      ...sound,
+      selectedPlaylistId: id,
+      playlists: [
+        ...(sound.playlists || []),
+        { id, name: `プレイリスト${(sound.playlists || []).length + 1}`, trackIds: [] },
+      ],
+    }));
+  }
+
+  function renameBgmPlaylist(playlistId, name) {
+    updateBgmSound((sound) => ({
+      ...sound,
+      playlists: (sound.playlists || []).map((playlist) => (
+        playlist.id === playlistId ? { ...playlist, name } : playlist
+      )),
+    }));
+  }
+
+  function deleteBgmPlaylist(playlistId) {
+    if (playlistId === DEFAULT_BGM_PLAYLIST_ID) return;
+    updateBgmSound((sound) => {
+      const playlists = (sound.playlists || []).filter((playlist) => playlist.id !== playlistId);
+      return {
+        ...sound,
+        selectedPlaylistId: sound.selectedPlaylistId === playlistId ? DEFAULT_BGM_PLAYLIST_ID : sound.selectedPlaylistId,
+        playlists,
+      };
+    });
+  }
+
+  function addTrackToBgmPlaylist(playlistId, trackId) {
+    updateBgmSound((sound) => ({
+      ...sound,
+      playlists: (sound.playlists || []).map((playlist) => (
+        playlist.id === playlistId ? { ...playlist, trackIds: [...playlist.trackIds, trackId] } : playlist
+      )),
+    }));
+  }
+
+  function removeTrackFromBgmPlaylist(playlistId, index) {
+    updateBgmSound((sound) => ({
+      ...sound,
+      playlists: (sound.playlists || []).map((playlist) => {
+        if (playlist.id !== playlistId) return playlist;
+        return { ...playlist, trackIds: playlist.trackIds.filter((_, itemIndex) => itemIndex !== index) };
+      }),
+    }));
+  }
+
+  function moveBgmPlaylistTrack(playlistId, index, direction) {
+    updateBgmSound((sound) => ({
+      ...sound,
+      playlists: (sound.playlists || []).map((playlist) => {
+        if (playlist.id !== playlistId) return playlist;
+        const nextIndex = index + direction;
+        if (nextIndex < 0 || nextIndex >= playlist.trackIds.length) return playlist;
+        const trackIds = [...playlist.trackIds];
+        [trackIds[index], trackIds[nextIndex]] = [trackIds[nextIndex], trackIds[index]];
+        return { ...playlist, trackIds };
+      }),
+    }));
+  }
+
+  async function addBgmFiles(files, playlistId) {
+    const selectedFiles = Array.from(files || []).filter((file) => file.type.startsWith("audio/") || file.type.startsWith("video/"));
+    if (!selectedFiles.length) {
+      setBgmLibraryMessage("音楽または画面録画ファイルを選んでください");
+      return;
+    }
+    const addedTracks = [];
+    try {
+      for (const file of selectedFiles) {
+        const id = `custom-bgm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const track = {
+          id,
+          name: file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "追加BGM",
+          kind: file.type.startsWith("video/") ? "video" : "audio",
+          type: "custom",
+          mimeType: file.type,
+          createdAt: new Date().toISOString(),
+        };
+        await putBgmBlob(id, file);
+        addedTracks.push(track);
+      }
+      updateBgmSound((sound) => ({
+        ...sound,
+        customTracks: [...(sound.customTracks || []), ...addedTracks],
+        playlists: (sound.playlists || []).map((playlist) => (
+          playlist.id === playlistId
+            ? { ...playlist, trackIds: [...playlist.trackIds, ...addedTracks.map((track) => track.id)] }
+            : playlist
+        )),
+      }));
+      setBgmLibraryMessage(`${addedTracks.length}件のBGMを追加しました`);
+    } catch {
+      setBgmLibraryMessage("BGMを保存できませんでした。容量やファイル形式を確認してください");
+    }
+  }
+
+  async function deleteCustomBgmTrack(trackId) {
+    try {
+      await deleteBgmBlob(trackId);
+    } catch {
+      // Metadata cleanup is still useful when a stale IndexedDB entry cannot be removed.
+    }
+    updateBgmSound((sound) => ({
+      ...sound,
+      customTracks: (sound.customTracks || []).filter((track) => track.id !== trackId),
+      playlists: (sound.playlists || []).map((playlist) => ({
+        ...playlist,
+        trackIds: playlist.trackIds.filter((id) => id !== trackId),
+      })),
+    }));
+    setBgmLibraryMessage("追加BGMを削除しました");
   }
 
   function toggleSoundPanel() {
@@ -934,6 +1275,29 @@ function App() {
               updateSessionSubject={updateSessionSubject}
             />
           )}
+          {tab === "settings" && (
+            <SettingsScreen
+              state={state}
+              setTab={setTab}
+            />
+          )}
+          {tab === "bgm-library" && (
+            <BgmLibraryScreen
+              state={state}
+              setTab={setTab}
+              tracks={allBgmTracks()}
+              message={bgmLibraryMessage}
+              selectPlaylist={selectBgmPlaylist}
+              createPlaylist={createBgmPlaylist}
+              renamePlaylist={renameBgmPlaylist}
+              deletePlaylist={deleteBgmPlaylist}
+              addFiles={addBgmFiles}
+              addTrack={addTrackToBgmPlaylist}
+              removeTrack={removeTrackFromBgmPlaylist}
+              moveTrack={moveBgmPlaylistTrack}
+              deleteCustomTrack={deleteCustomBgmTrack}
+            />
+          )}
           {tab === "subjects" && (
             <SubjectEditScreen
               state={state}
@@ -1164,7 +1528,7 @@ function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startT
         <QuickTile icon={<BookOpen size={24} />} label="記録" onClick={() => setTab("records")} />
         <QuickTile icon={<Trophy size={24} />} label="ごほうび" onClick={() => setTab("wardrobe")} />
         <QuickTile icon={<Shirt size={24} />} label="衣装" onClick={() => setTab("closet")} />
-        <QuickTile icon={<Settings size={24} />} label="設定" onClick={() => resetLocal()} />
+        <QuickTile icon={<Settings size={24} />} label="設定" onClick={() => setTab("settings")} />
       </div>
       <p className="soft-line">{subject.label}を少しだけ進めよう。完了するとポイントがもらえるよ。</p>
     </div>
@@ -1177,6 +1541,176 @@ function QuickTile({ icon, label, onClick }) {
       {icon}
       <span>{label}</span>
     </button>
+  );
+}
+
+function SettingsScreen({ state, setTab }) {
+  return (
+    <div className="screen settings-screen">
+      <TopBar title="設定" points={state.points} onBack={() => setTab("home")} rightIcon="none" />
+      <section className="settings-card">
+        <button className="settings-row-button" type="button" onClick={() => setTab("bgm-library")}>
+          <span className="settings-row-icon"><ListMusic size={22} /></span>
+          <span>
+            <strong>音楽BGMファイルを編集する</strong>
+            <small>音楽や画面録画を追加してプレイリストを作れます</small>
+          </span>
+          <ChevronLeft size={18} />
+        </button>
+        <button className="settings-row-button warning" type="button" onClick={resetLocal}>
+          <span className="settings-row-icon"><RotateCcw size={22} /></span>
+          <span>
+            <strong>アプリの記録をリセット</strong>
+            <small>端末内の勉強記録と設定を初期化します</small>
+          </span>
+        </button>
+      </section>
+    </div>
+  );
+}
+
+function BgmLibraryScreen({
+  state,
+  setTab,
+  tracks,
+  message,
+  selectPlaylist,
+  createPlaylist,
+  renamePlaylist,
+  deletePlaylist,
+  addFiles,
+  addTrack,
+  removeTrack,
+  moveTrack,
+  deleteCustomTrack,
+}) {
+  const fileInputRef = useRef(null);
+  const sound = state.sound || {};
+  const playlists = sound.playlists || [];
+  const selectedPlaylist = playlists.find((playlist) => playlist.id === sound.selectedPlaylistId) || playlists[0];
+  const selectedTrackIds = selectedPlaylist?.trackIds || [];
+  const standardTracks = tracks.filter((track) => track.type === "standard");
+  const customTracks = tracks.filter((track) => track.type === "custom");
+
+  function trackById(trackId) {
+    return tracks.find((track) => track.id === trackId);
+  }
+
+  function handleFiles(event) {
+    addFiles(event.target.files, selectedPlaylist.id);
+    event.target.value = "";
+  }
+
+  return (
+    <div className="screen bgm-library-screen">
+      <TopBar title="BGM音楽集" points={state.points} onBack={() => setTab("settings")} rightIcon="none" />
+      <section className="bgm-panel">
+        <div className="section-head">
+          <b>プレイリスト</b>
+          <button type="button" onClick={createPlaylist}><Plus size={15} />追加</button>
+        </div>
+        <div className="playlist-tabs">
+          {playlists.map((playlist) => (
+            <button
+              key={playlist.id}
+              type="button"
+              className={playlist.id === selectedPlaylist?.id ? "active" : ""}
+              onClick={() => selectPlaylist(playlist.id)}
+            >
+              {playlist.name}
+            </button>
+          ))}
+        </div>
+        {selectedPlaylist && (
+          <div className="playlist-editor">
+            <label>
+              <span>名前</span>
+              <input
+                type="text"
+                value={selectedPlaylist.name}
+                maxLength={30}
+                onChange={(event) => renamePlaylist(selectedPlaylist.id, event.target.value)}
+              />
+            </label>
+            {selectedPlaylist.id !== DEFAULT_BGM_PLAYLIST_ID && (
+              <button type="button" className="delete-playlist" onClick={() => deletePlaylist(selectedPlaylist.id)}>
+                <Trash2 size={15} />削除
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="bgm-panel">
+        <div className="section-head">
+          <b>このリストで流す曲</b>
+          <button type="button" onClick={() => fileInputRef.current?.click()}><Upload size={15} />端末から追加</button>
+        </div>
+        <input
+          ref={fileInputRef}
+          className="hidden-file-input"
+          type="file"
+          accept="audio/*,video/*"
+          multiple
+          onChange={handleFiles}
+        />
+        {message && <p className="bgm-message">{message}</p>}
+        <div className="bgm-track-list">
+          {selectedTrackIds.length ? selectedTrackIds.map((trackId, index) => {
+            const track = trackById(trackId);
+            if (!track) return null;
+            return (
+              <article className="bgm-track-row" key={`${trackId}-${index}`}>
+                <span className="track-kind"><FileMusic size={18} /></span>
+                <div>
+                  <strong>{track.name}</strong>
+                  <small>{track.type === "standard" ? "標準曲" : track.kind === "video" ? "画面録画/動画" : "追加音楽"}</small>
+                </div>
+                <button type="button" aria-label="上へ" onClick={() => moveTrack(selectedPlaylist.id, index, -1)} disabled={index === 0}><ArrowUp size={15} /></button>
+                <button type="button" aria-label="下へ" onClick={() => moveTrack(selectedPlaylist.id, index, 1)} disabled={index === selectedTrackIds.length - 1}><ArrowDown size={15} /></button>
+                <button type="button" aria-label="リストから外す" onClick={() => removeTrack(selectedPlaylist.id, index)}><Trash2 size={15} /></button>
+              </article>
+            );
+          }) : (
+            <p className="empty compact">曲を追加すると、タイマー中に順番に流れます。</p>
+          )}
+        </div>
+      </section>
+
+      <section className="bgm-panel">
+        <div className="section-head">
+          <b>曲一覧</b>
+          <span className="small-note">標準曲と追加曲を選べます</span>
+        </div>
+        <BgmCatalog title="標準曲" tracks={standardTracks} playlistId={selectedPlaylist?.id} addTrack={addTrack} />
+        <BgmCatalog title="追加した曲・画面録画" tracks={customTracks} playlistId={selectedPlaylist?.id} addTrack={addTrack} deleteCustomTrack={deleteCustomTrack} />
+      </section>
+    </div>
+  );
+}
+
+function BgmCatalog({ title, tracks, playlistId, addTrack, deleteCustomTrack }) {
+  return (
+    <div className="bgm-catalog">
+      <h3>{title}</h3>
+      {tracks.length ? tracks.map((track) => (
+        <article className="bgm-catalog-row" key={track.id}>
+          <span className="track-kind"><FileMusic size={18} /></span>
+          <div>
+            <strong>{track.name}</strong>
+            <small>{track.type === "standard" ? "標準曲" : track.kind === "video" ? "画面録画/動画" : "追加音楽"}</small>
+          </div>
+          <button type="button" onClick={() => addTrack(playlistId, track.id)}>追加</button>
+          {track.type === "custom" && (
+            <button type="button" className="danger-icon" aria-label="端末保存から削除" onClick={() => deleteCustomTrack(track.id)}>
+              <Trash2 size={15} />
+            </button>
+          )}
+        </article>
+      )) : (
+        <p className="empty compact">まだ追加曲はありません。</p>
+      )}
+    </div>
   );
 }
 
