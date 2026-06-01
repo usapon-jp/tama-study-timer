@@ -732,8 +732,8 @@ button:disabled {
 
 .sound-panel {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: 1fr;
+  align-items: stretch;
   gap: 8px;
   margin-top: -4px;
   padding: 10px;
@@ -743,7 +743,15 @@ button:disabled {
   box-shadow: 0 12px 24px rgba(81, 58, 32, 0.12);
 }
 
-.sound-panel label {
+.sound-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.sound-panel label,
+.sound-edit-link {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -751,6 +759,29 @@ button:disabled {
   font-size: 0.74rem;
   font-weight: 900;
   white-space: nowrap;
+}
+
+.playlist-select-label {
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.playlist-select-label span {
+  flex: 0 0 auto;
+}
+
+.playlist-select-label select {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(208, 179, 132, 0.58);
+  border-radius: 999px;
+  background: rgba(255, 253, 247, 0.92);
+  color: #604931;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 950;
+  padding: 5px 30px 5px 10px;
 }
 
 .sound-panel input {
@@ -768,6 +799,14 @@ button:disabled {
   color: #5e7544;
   font-size: 0.74rem;
   font-weight: 950;
+}
+
+.sound-edit-link {
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 999px;
+  background: #fff6e2;
+  color: #765f48;
 }
 
 .settings-screen,

@@ -1285,6 +1285,7 @@ function App() {
               soundPanelOpen={soundPanelOpen}
               toggleSoundPanel={toggleSoundPanel}
               updateSound={updateSound}
+              selectPlaylist={selectBgmPlaylist}
               playBgmPreview={playBgmPreview}
               playAlarm={playAlarm}
               updateLayoutOffsets={updateLayoutOffsets}
@@ -1762,6 +1763,7 @@ function TimerScreen({
   soundPanelOpen,
   toggleSoundPanel,
   updateSound,
+  selectPlaylist,
   playBgmPreview,
   playAlarm,
   updateLayoutOffsets,
@@ -1770,6 +1772,8 @@ function TimerScreen({
   const isCompletionPending = Boolean(pendingCompletion);
   const isOvertime = state.timer.mode === "focus" && overtimeSeconds > 0;
   const isAlarmChoiceOpen = isCompletionPending && !pendingCompletion?.acknowledged;
+  const playlists = sound?.playlists || [];
+  const selectedPlaylist = playlists.find((playlist) => playlist.id === sound?.selectedPlaylistId) || playlists[0];
   const [customFocusOpen, setCustomFocusOpen] = useState(false);
   const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const [customFocusMinutes, setCustomFocusMinutes] = useState(String(state.timer.focusMinutes || 20));
@@ -1900,24 +1904,45 @@ function TimerScreen({
       </header>
       {soundPanelOpen && (
         <section className="sound-panel">
-          <label>
-            <input
-              type="checkbox"
-              checked={Boolean(sound?.bgm)}
-              onChange={(event) => updateSound({ bgm: event.target.checked })}
-            />
-            勉強用BGM
+          <div className="sound-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={Boolean(sound?.bgm)}
+                onChange={(event) => updateSound({ bgm: event.target.checked })}
+              />
+              勉強用BGM
+            </label>
+            <button type="button" onClick={playBgmPreview}>試す</button>
+          </div>
+          <label className="playlist-select-label">
+            <span>プレイリスト</span>
+            <select
+              value={selectedPlaylist?.id || ""}
+              onChange={(event) => selectPlaylist(event.target.value)}
+              disabled={!playlists.length}
+            >
+              {playlists.map((playlist) => (
+                <option key={playlist.id} value={playlist.id}>
+                  {playlist.name || "プレイリスト"}
+                </option>
+              ))}
+            </select>
           </label>
-          <button type="button" onClick={playBgmPreview}>試す</button>
-          <label>
-            <input
-              type="checkbox"
-              checked={Boolean(sound?.alarm)}
-              onChange={(event) => updateSound({ alarm: event.target.checked })}
-            />
-            完了アラーム
-          </label>
-          <button type="button" onClick={playAlarm}>試す</button>
+          <button className="sound-edit-link" type="button" onClick={() => setTab("bgm-library")}>
+            <ListMusic size={15} />BGM音楽集を編集
+          </button>
+          <div className="sound-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={Boolean(sound?.alarm)}
+                onChange={(event) => updateSound({ alarm: event.target.checked })}
+              />
+              完了アラーム
+            </label>
+            <button type="button" onClick={playAlarm}>試す</button>
+          </div>
         </section>
       )}
       {subjectPickerOpen && (
