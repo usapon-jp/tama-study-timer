@@ -10,6 +10,7 @@ import {
   CirclePause,
   CirclePlay,
   Clock3,
+  Download,
   FileMusic,
   Home,
   ListMusic,
@@ -30,6 +31,7 @@ import {
 import "./styles.css";
 
 const STORAGE_KEY = "tama-study-timer-state-v1";
+const BACKUP_VERSION = 1;
 const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 20, 40, 60];
 const COMPLETION_ALARM_MS = 10000;
@@ -113,6 +115,10 @@ function subjectIconSrc(icon) {
 
 function todayKey() {
   return dateKeyFor(new Date());
+}
+
+function backupFileName() {
+  return `tama-study-timer-backup-${todayKey()}.json`;
 }
 
 function isHexColor(value) {
@@ -524,6 +530,7 @@ function App() {
   const [tab, setTab] = useState("home");
   const [nowTick, setNowTick] = useState(Date.now());
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
+  const [dataManagerOpen, setDataManagerOpen] = useState(false);
   const [pendingCompletion, setPendingCompletion] = useState(null);
   const [rewardToast, setRewardToast] = useState(null);
   const [bgmLibraryMessage, setBgmLibraryMessage] = useState("");
@@ -1122,6 +1129,49 @@ function App() {
     if (nextSession) setTab("home");
   }
 
+  function exportBackup() {
+    const payload = {
+      app: "tama-study-timer",
+      version: BACKUP_VERSION,
+      exportedAt: new Date().toISOString(),
+      data: normalizeState(state),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = backupFileName();
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function importBackupFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || ""));
+        const rawData = parsed?.app === "tama-study-timer" && parsed?.data ? parsed.data : parsed;
+        const restored = normalizeState(rawData);
+        const ok = window.confirm("現在の端末内データを、選んだバックアップで上書きします。よろしいですか？");
+        if (!ok) return;
+        stopBgm();
+        stopAlarm();
+        clearPendingAutoCompletion();
+        releaseWakeLock();
+        setPendingCompletion(null);
+        setState(restored);
+        setDataManagerOpen(false);
+        setTab("home");
+      } catch {
+        window.alert("バックアップファイルを読み込めませんでした。たまの勉強タイマーのJSONファイルか確認してください。");
+      }
+    };
+    reader.readAsText(file);
+  }
+
   function unlockOrSelect(outfit) {
     setState((current) => {
       const isUnlocked = current.unlockedOutfits.includes(outfit.id);
@@ -1304,6 +1354,7 @@ function App() {
             <SettingsScreen
               state={state}
               setTab={setTab}
+              openDataManager={() => setDataManagerOpen(true)}
             />
           )}
           {tab === "bgm-library" && (
@@ -1350,6 +1401,13 @@ function App() {
             />
           )}
           <BottomNav active={tab} setTab={setTab} />
+          {dataManagerOpen && (
+            <DataManagementSheet
+              onExport={exportBackup}
+              onImport={importBackupFile}
+              onClose={() => setDataManagerOpen(false)}
+            />
+          )}
         </PhoneFrame>
       </div>
     </main>
@@ -1569,7 +1627,50 @@ function QuickTile({ icon, label, onClick }) {
   );
 }
 
-function SettingsScreen({ state, setTab }) {
+function DataManagementSheet({ onExport, onImport, onClose }) {
+  const inputId = "backup-file-input";
+
+  return (
+    <div className="chart-settings-overlay" role="dialog" aria-modal="true" aria-label="データ管理">
+      <button className="settings-scrim" type="button" aria-label="閉じる" onClick={onClose} />
+      <section className="chart-settings-sheet compact-picker-sheet data-management-sheet">
+        <div className="sheet-head">
+          <div>
+            <span><Download size={16} />データ管理</span>
+            <small>端末内の記録をJSONで保存・復元できます</small>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="閉じる">×</button>
+        </div>
+        <div className="backup-actions">
+          <button className="backup-action primary" type="button" onClick={onExport}>
+            <Download size={18} />
+            <span>バックアップを保存</span>
+            <small>記録・設定・ごほうび・ptを書き出します</small>
+          </button>
+          <label className="backup-action" htmlFor={inputId}>
+            <Upload size={18} />
+            <span>バックアップから復元</span>
+            <small>選んだJSONで現在の端末内データを上書きします</small>
+          </label>
+          <input
+            id={inputId}
+            className="backup-file-input"
+            type="file"
+            accept="application/json,.json"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              onImport(file);
+            }}
+          />
+        </div>
+        <p className="backup-note">追加したBGMファイル本体は端末内だけに残ります。復元前に今のデータも必要なら、先にバックアップを保存してください。</p>
+      </section>
+    </div>
+  );
+}
+
+function SettingsScreen({ state, setTab, openDataManager }) {
   return (
     <div className="screen settings-screen">
       <TopBar title="設定" points={state.points} onBack={() => setTab("home")} rightIcon="none" />
@@ -1579,6 +1680,14 @@ function SettingsScreen({ state, setTab }) {
           <span>
             <strong>音楽BGMファイルを編集する</strong>
             <small>音楽や画面録画を追加してプレイリストを作れます</small>
+          </span>
+          <ChevronLeft size={18} />
+        </button>
+        <button className="settings-row-button" type="button" onClick={openDataManager}>
+          <span className="settings-row-icon"><Download size={22} /></span>
+          <span>
+            <strong>データ管理</strong>
+            <small>記録や設定をJSONで保存・復元します</small>
           </span>
           <ChevronLeft size={18} />
         </button>
@@ -2623,6 +2732,8 @@ function BottomNav({ active, setTab }) {
 }
 
 async function resetLocal() {
+  const ok = window.confirm("本当にアプリの記録をリセットしてもいいですか？端末内の勉強記録、設定、追加BGMは削除されます。必要なら先にデータ管理からバックアップを保存してください。");
+  if (!ok) return;
   await deleteBgmDb();
   localStorage.removeItem(STORAGE_KEY);
   window.location.reload();
