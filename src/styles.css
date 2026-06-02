@@ -877,6 +877,73 @@ button:disabled {
   line-height: 1.45;
 }
 
+.device-name-field {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid rgba(208, 179, 132, 0.42);
+  border-radius: 18px;
+  background: rgba(255, 253, 247, 0.84);
+  color: #765f48;
+  font-size: 0.76rem;
+  font-weight: 950;
+}
+
+.device-name-field input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(208, 179, 132, 0.64);
+  border-radius: 14px;
+  background: rgba(255, 250, 238, 0.94);
+  color: #4f3d2c;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 950;
+  padding: 9px 12px;
+}
+
+.record-sync-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 9px;
+}
+
+.record-sync-button {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid rgba(208, 179, 132, 0.42);
+  border-radius: 18px;
+  background: rgba(255, 246, 226, 0.92);
+  color: #604931;
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.record-sync-button.primary {
+  color: #fffdf7;
+  background: linear-gradient(135deg, #8fa871, #d0aa62);
+}
+
+.record-sync-button svg {
+  justify-self: center;
+}
+
+.record-sync-message {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #eff4df;
+  color: #5e7544;
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.5;
+}
+
 .playlist-tabs {
   display: flex;
   gap: 8px;

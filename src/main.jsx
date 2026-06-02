@@ -32,6 +32,7 @@ import "./styles.css";
 
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const BACKUP_VERSION = 1;
+const APP_VERSION = "0.1.0";
 const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 20, 40, 60];
 const COMPLETION_ALARM_MS = 10000;
@@ -121,6 +122,10 @@ function backupFileName() {
   return `tama-study-timer-backup-${todayKey()}.json`;
 }
 
+function dailyRecordsFileName() {
+  return `tama-study-timer-records-${todayKey()}.json`;
+}
+
 function isHexColor(value) {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
 }
@@ -128,6 +133,7 @@ function isHexColor(value) {
 function defaultState() {
   return {
     appName: "たまの勉強タイマー",
+    deviceName: "",
     points: 0,
     timerOffset: { x: 0, y: 0 },
     characterOffset: { x: 0, y: 0 },
@@ -201,6 +207,68 @@ function normalizeSubjects(rawSubjects) {
   return subjects.length ? subjects : DEFAULT_SUBJECTS;
 }
 
+function createRecordId() {
+  return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function legacyRecordId(session, index = 0) {
+  return [
+    "legacy",
+    session?.date || "unknown-date",
+    session?.completedAt || "unknown-time",
+    session?.subject || "subject",
+    session?.mode || "mode",
+    Math.round(Number(session?.minutes || 0)),
+    Math.round(Number(session?.reward || 0)),
+    index,
+  ].join("-");
+}
+
+function normalizeSession(session, index = 0) {
+  if (!session || typeof session !== "object") return null;
+  const date = typeof session.date === "string" && session.date.trim() ? session.date.trim() : todayKey();
+  const minutes = Math.max(0, Math.round(Number(session.minutes || 0)));
+  const reward = Math.max(0, Math.round(Number(session.reward ?? rewardFor(minutes))));
+  return {
+    id: typeof session.id === "string" && session.id.trim() ? session.id.trim() : legacyRecordId(session, index),
+    date,
+    subject: typeof session.subject === "string" && session.subject.trim() ? session.subject.trim() : DEFAULT_SUBJECTS[0].id,
+    mode: session.mode === "free" ? "free" : "focus",
+    minutes,
+    reward,
+    completedAt: typeof session.completedAt === "string" && session.completedAt.trim() ? session.completedAt : new Date().toISOString(),
+  };
+}
+
+function normalizeSessions(rawSessions) {
+  if (!Array.isArray(rawSessions)) return [];
+  const seen = new Set();
+  return rawSessions
+    .map((session, index) => normalizeSession(session, index))
+    .filter(Boolean)
+    .filter((session) => {
+      if (seen.has(session.id)) return false;
+      seen.add(session.id);
+      return true;
+    })
+    .slice(0, MAX_STORED_SESSIONS);
+}
+
+function recomputeTotalsFromSessions(current, sessions) {
+  const today = todayKey();
+  const safeSessions = normalizeSessions(sessions);
+  return {
+    ...current,
+    today,
+    todayMinutes: safeSessions
+      .filter((session) => session.date === today)
+      .reduce((sum, session) => sum + session.minutes, 0),
+    totalMinutes: safeSessions.reduce((sum, session) => sum + session.minutes, 0),
+    points: safeSessions.reduce((sum, session) => sum + session.reward, 0),
+    sessions: safeSessions,
+  };
+}
+
 function normalizeState(raw) {
   const base = defaultState();
   if (!raw || typeof raw !== "object") return base;
@@ -215,6 +283,7 @@ function normalizeState(raw) {
     ...base,
     ...raw,
     appName: typeof raw.appName === "string" && raw.appName.trim() ? raw.appName.trim().slice(0, 30) : base.appName,
+    deviceName: typeof raw.deviceName === "string" ? raw.deviceName.trim().slice(0, 30) : base.deviceName,
     timerOffset: raw.timerOffset && typeof raw.timerOffset.x === "number" && typeof raw.timerOffset.y === "number" ? raw.timerOffset : { x: 0, y: 0 },
     characterOffset: raw.characterOffset && typeof raw.characterOffset.x === "number" && typeof raw.characterOffset.y === "number" ? raw.characterOffset : { x: 0, y: 0 },
     today,
@@ -227,7 +296,7 @@ function normalizeState(raw) {
     selectedSubject: subjects.some((item) => item.id === raw.selectedSubject) ? raw.selectedSubject : subjects[0].id,
     selectedOutfitId,
     unlockedOutfits: unlocked,
-    sessions: Array.isArray(raw.sessions) ? raw.sessions.slice(0, MAX_STORED_SESSIONS) : [],
+    sessions: normalizeSessions(raw.sessions),
     timer: { ...base.timer, ...(raw.timer || {}) },
     sound: normalizeSound(raw.sound, base.sound),
     chartSettings: normalizeChartSettings(raw.chartSettings, subjects, base.chartSettings),
@@ -534,6 +603,7 @@ function App() {
   const [pendingCompletion, setPendingCompletion] = useState(null);
   const [rewardToast, setRewardToast] = useState(null);
   const [bgmLibraryMessage, setBgmLibraryMessage] = useState("");
+  const [recordSyncMessage, setRecordSyncMessage] = useState("");
   const stateRef = useRef(state);
   const audioContextRef = useRef(null);
   const bgmAudioRef = useRef(null);
@@ -1038,7 +1108,7 @@ function App() {
     const minutes = Math.max(1, Math.round(seconds / 60));
     const reward = rewardFor(minutes);
     return {
-      id: `${Date.now()}`,
+      id: createRecordId(),
       date: todayKey(),
       subject: current.selectedSubject,
       mode: current.timer.mode,
@@ -1069,7 +1139,7 @@ function App() {
   function beginPendingCompletion() {
     if (!state.timer.running || state.timer.mode !== "focus") return;
     const nextPending = {
-      id: `${Date.now()}`,
+      id: createRecordId(),
       startedAt: new Date().toISOString(),
       acknowledged: false,
     };
@@ -1145,6 +1215,67 @@ function App() {
     anchor.click();
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportTodayRecords() {
+    const records = normalizeSessions(state.sessions).filter((session) => session.date === todayKey());
+    const payload = {
+      appVersion: APP_VERSION,
+      exportedAt: new Date().toISOString(),
+      deviceName: state.deviceName?.trim() || "この端末",
+      records,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = dailyRecordsFileName();
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setRecordSyncMessage(`今日の記録を書き出しました（${records.length}件）`);
+  }
+
+  function importDailyRecordsFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || ""));
+        if (!parsed || !Array.isArray(parsed.records)) {
+          throw new Error("invalid records payload");
+        }
+        const today = todayKey();
+        const incomingRecords = normalizeSessions(parsed.records).filter((session) => session.date === today);
+        const ok = window.confirm("この端末の記録に追加します。既存データは消えません。");
+        if (!ok) return;
+        const current = stateRef.current;
+        const existingSessions = normalizeSessions(current.sessions);
+        const existingIds = new Set(existingSessions.map((session) => session.id));
+        const additions = [];
+        let skipped = 0;
+        incomingRecords.forEach((session) => {
+          if (existingIds.has(session.id)) {
+            skipped += 1;
+            return;
+          }
+          existingIds.add(session.id);
+          additions.push(session);
+        });
+        const merged = [...additions, ...existingSessions]
+          .sort((left, right) => new Date(right.completedAt).getTime() - new Date(left.completedAt).getTime())
+          .slice(0, MAX_STORED_SESSIONS);
+        setState(recomputeTotalsFromSessions(current, merged));
+        setRecordSyncMessage(`${additions.length}件追加、${skipped}件重複スキップ`);
+      } catch {
+        setRecordSyncMessage("記録JSONを読み込めませんでした。今日の記録を書き出したJSONか確認してください。");
+      }
+    };
+    reader.onerror = () => {
+      setRecordSyncMessage("記録JSONを読み込めませんでした。");
+    };
+    reader.readAsText(file);
   }
 
   function importBackupFile(file) {
@@ -1284,6 +1415,13 @@ function App() {
     }));
   }
 
+  function updateDeviceName(name) {
+    setState((current) => ({
+      ...current,
+      deviceName: name.slice(0, 30),
+    }));
+  }
+
   function updateLayoutOffsets(timerOffset, characterOffset) {
     setState((current) => ({
       ...current,
@@ -1355,6 +1493,10 @@ function App() {
               state={state}
               setTab={setTab}
               openDataManager={() => setDataManagerOpen(true)}
+              recordSyncMessage={recordSyncMessage}
+              updateDeviceName={updateDeviceName}
+              exportTodayRecords={exportTodayRecords}
+              importDailyRecordsFile={importDailyRecordsFile}
             />
           )}
           {tab === "bgm-library" && (
@@ -1670,11 +1812,45 @@ function DataManagementSheet({ onExport, onImport, onClose }) {
   );
 }
 
-function SettingsScreen({ state, setTab, openDataManager }) {
+function SettingsScreen({ state, setTab, openDataManager, recordSyncMessage, updateDeviceName, exportTodayRecords, importDailyRecordsFile }) {
+  const importInputRef = useRef(null);
+
   return (
     <div className="screen settings-screen">
       <TopBar title="設定" points={state.points} onBack={() => setTab("home")} rightIcon="none" />
       <section className="settings-card">
+        <label className="device-name-field">
+          <span>端末名</span>
+          <input
+            type="text"
+            value={state.deviceName || ""}
+            maxLength={30}
+            placeholder="この端末"
+            onChange={(event) => updateDeviceName(event.target.value)}
+          />
+        </label>
+        <div className="record-sync-actions">
+          <button className="record-sync-button primary" type="button" onClick={exportTodayRecords}>
+            <Download size={18} />
+            <span>今日の記録を書き出す</span>
+          </button>
+          <button className="record-sync-button" type="button" onClick={() => importInputRef.current?.click()}>
+            <Upload size={18} />
+            <span>記録を読み込んで集約</span>
+          </button>
+          <input
+            ref={importInputRef}
+            className="backup-file-input"
+            type="file"
+            accept="application/json,.json"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              importDailyRecordsFile(file);
+            }}
+          />
+        </div>
+        {recordSyncMessage && <p className="record-sync-message">{recordSyncMessage}</p>}
         <button className="settings-row-button" type="button" onClick={() => setTab("bgm-library")}>
           <span className="settings-row-icon"><ListMusic size={22} /></span>
           <span>
