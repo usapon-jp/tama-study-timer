@@ -615,6 +615,27 @@ async function dataUrlToBlob(dataUrl) {
   return response.blob();
 }
 
+async function saveJsonFile(filename, payload) {
+  const blob = new Blob([typeof payload === "string" ? payload : JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const file = new File([blob], filename, { type: "application/json" });
+  if (navigator.canShare?.({ files: [file] }) && navigator.share) {
+    await navigator.share({
+      files: [file],
+      title: filename,
+    });
+    return "shared";
+  }
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return "downloaded";
+}
+
 function App() {
   const [state, setState] = useState(loadState);
   const [tab, setTab] = useState("home");
@@ -1070,17 +1091,10 @@ function App() {
         playlists: state.sound?.playlists || [],
         customTracks,
       };
-      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = bgmLibraryFileName();
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      await saveJsonFile(bgmLibraryFileName(), payload);
       setBgmLibraryMessage(`BGM音楽集を書き出しました（追加BGM ${customTracks.length}件）`);
-    } catch {
+    } catch (error) {
+      if (error?.name === "AbortError") return;
       setBgmLibraryMessage("BGM音楽集を書き出せませんでした。容量や端末の空き容量を確認してください");
     }
   }
@@ -1316,25 +1330,23 @@ function App() {
     if (nextSession) setTab("home");
   }
 
-  function exportBackup() {
+  async function exportBackup() {
     const payload = {
       app: "tama-study-timer",
       version: BACKUP_VERSION,
       exportedAt: new Date().toISOString(),
       data: normalizeState(state),
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = backupFileName();
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    try {
+      await saveJsonFile(backupFileName(), payload);
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        window.alert("バックアップを書き出せませんでした。端末の空き容量や共有設定を確認してください。");
+      }
+    }
   }
 
-  function exportTodayRecords() {
+  async function exportTodayRecords() {
     const records = normalizeSessions(state.sessions).filter((session) => session.date === todayKey());
     const payload = {
       appVersion: APP_VERSION,
@@ -1342,16 +1354,14 @@ function App() {
       deviceName: state.deviceName?.trim() || "この端末",
       records,
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = dailyRecordsFileName();
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setRecordSyncMessage(`今日の記録を書き出しました（${records.length}件）`);
+    try {
+      await saveJsonFile(dailyRecordsFileName(), payload);
+      setRecordSyncMessage(`今日の記録を書き出しました（${records.length}件）`);
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        setRecordSyncMessage("今日の記録を書き出せませんでした。端末の空き容量や共有設定を確認してください。");
+      }
+    }
   }
 
   function importDailyRecordsFile(file) {
@@ -2062,7 +2072,7 @@ function BgmLibraryScreen({
             }}
           />
         </div>
-        <p className="bgm-transfer-note">書き出したJSONをファイルアプリでiCloud Driveに保存し、別端末でこの画面から読み込めます。</p>
+        <p className="bgm-transfer-note">書き出し後に共有画面が開いたら「ファイルに保存」からiCloud Driveなど保存先を選べます。別端末ではこの画面から読み込んでください。</p>
       </section>
       <section className="bgm-panel">
         <div className="section-head">
