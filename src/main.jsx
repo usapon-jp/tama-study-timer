@@ -27,12 +27,14 @@ import {
   Trash2,
   Trophy,
   Upload,
+  Users,
 } from "lucide-react";
 import "./styles.css";
 
 const STORAGE_KEY = "tama-study-timer-state-v1";
 const BACKUP_VERSION = 1;
 const APP_VERSION = "0.1.0";
+const DEFAULT_ACCOUNT_NAME = "たま";
 const MAX_STORED_SESSIONS = 365;
 const FOCUS_PRESETS = [5, 20, 40, 60];
 const COMPLETION_ALARM_MS = 10000;
@@ -99,6 +101,29 @@ const STUDY_IMAGES = {
   "outfit-r-1": "study/full/outfit-r-1.png",
 };
 const SUBJECT_ICON_VERSION = "20260526-free-icon";
+const ACCOUNT_DATA_KEYS = [
+  "appName",
+  "points",
+  "timerOffset",
+  "characterOffset",
+  "totalMinutes",
+  "todayMinutes",
+  "dailyGoalMinutes",
+  "today",
+  "streak",
+  "selectedSubject",
+  "subjects",
+  "selectedOutfitId",
+  "unlockedOutfits",
+  "sessions",
+  "timer",
+  "sound",
+  "chartSettings",
+  "progress",
+  "inventory",
+  "town",
+  "logs",
+];
 
 function studyImageFor(outfitId) {
   return STUDY_IMAGES[outfitId] || STUDY_IMAGES["outfit-n-1"];
@@ -137,7 +162,6 @@ function isHexColor(value) {
 function defaultState() {
   return {
     appName: "たまの勉強タイマー",
-    deviceName: "",
     points: 0,
     timerOffset: { x: 0, y: 0 },
     characterOffset: { x: 0, y: 0 },
@@ -176,7 +200,21 @@ function defaultState() {
       visibleSubjects: DEFAULT_SUBJECTS.map((subject) => subject.id),
       colors: DEFAULT_CHART_COLORS,
     },
+    progress: {},
+    inventory: [],
+    town: {},
+    logs: [],
   };
+}
+
+function createAccountId() {
+  return globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `account-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function accountDisplayName(account, fallback = DEFAULT_ACCOUNT_NAME) {
+  return typeof account?.name === "string" && account.name.trim()
+    ? account.name.trim().slice(0, 20)
+    : fallback;
 }
 
 function normalizeSubjects(rawSubjects) {
@@ -228,13 +266,14 @@ function legacyRecordId(session, index = 0) {
   ].join("-");
 }
 
-function normalizeSession(session, index = 0) {
+function normalizeSession(session, index = 0, accountId = "") {
   if (!session || typeof session !== "object") return null;
   const date = typeof session.date === "string" && session.date.trim() ? session.date.trim() : todayKey();
   const minutes = Math.max(0, Math.round(Number(session.minutes || 0)));
   const reward = Math.max(0, Math.round(Number(session.reward ?? rewardFor(minutes))));
   return {
     id: typeof session.id === "string" && session.id.trim() ? session.id.trim() : legacyRecordId(session, index),
+    accountId: typeof session.accountId === "string" && session.accountId.trim() ? session.accountId.trim() : accountId,
     date,
     subject: typeof session.subject === "string" && session.subject.trim() ? session.subject.trim() : DEFAULT_SUBJECTS[0].id,
     mode: session.mode === "free" ? "free" : "focus",
@@ -244,11 +283,11 @@ function normalizeSession(session, index = 0) {
   };
 }
 
-function normalizeSessions(rawSessions) {
+function normalizeSessions(rawSessions, accountId = "") {
   if (!Array.isArray(rawSessions)) return [];
   const seen = new Set();
   return rawSessions
-    .map((session, index) => normalizeSession(session, index))
+    .map((session, index) => normalizeSession(session, index, accountId))
     .filter(Boolean)
     .filter((session) => {
       if (seen.has(session.id)) return false;
@@ -260,7 +299,7 @@ function normalizeSessions(rawSessions) {
 
 function recomputeTotalsFromSessions(current, sessions) {
   const today = todayKey();
-  const safeSessions = normalizeSessions(sessions);
+  const safeSessions = normalizeSessions(sessions, current.activeAccountId);
   return {
     ...current,
     today,
@@ -273,7 +312,7 @@ function recomputeTotalsFromSessions(current, sessions) {
   };
 }
 
-function normalizeState(raw) {
+function normalizeAccountData(raw, accountId = "") {
   const base = defaultState();
   if (!raw || typeof raw !== "object") return base;
   const today = todayKey();
@@ -287,7 +326,6 @@ function normalizeState(raw) {
     ...base,
     ...raw,
     appName: typeof raw.appName === "string" && raw.appName.trim() ? raw.appName.trim().slice(0, 30) : base.appName,
-    deviceName: typeof raw.deviceName === "string" ? raw.deviceName.trim().slice(0, 30) : base.deviceName,
     timerOffset: raw.timerOffset && typeof raw.timerOffset.x === "number" && typeof raw.timerOffset.y === "number" ? raw.timerOffset : { x: 0, y: 0 },
     characterOffset: raw.characterOffset && typeof raw.characterOffset.x === "number" && typeof raw.characterOffset.y === "number" ? raw.characterOffset : { x: 0, y: 0 },
     today,
@@ -300,10 +338,104 @@ function normalizeState(raw) {
     selectedSubject: subjects.some((item) => item.id === raw.selectedSubject) ? raw.selectedSubject : subjects[0].id,
     selectedOutfitId,
     unlockedOutfits: unlocked,
-    sessions: normalizeSessions(raw.sessions),
+    sessions: normalizeSessions(raw.sessions, accountId),
     timer: { ...base.timer, ...(raw.timer || {}) },
     sound: normalizeSound(raw.sound, base.sound),
     chartSettings: normalizeChartSettings(raw.chartSettings, subjects, base.chartSettings),
+    progress: raw.progress && typeof raw.progress === "object" ? raw.progress : {},
+    inventory: Array.isArray(raw.inventory) ? raw.inventory : [],
+    town: raw.town && typeof raw.town === "object" ? raw.town : {},
+    logs: Array.isArray(raw.logs) ? raw.logs : [],
+  };
+}
+
+function normalizeState(raw, accountId = "") {
+  return normalizeAccountData(raw, accountId);
+}
+
+function extractAccountData(stateLike, accountId = stateLike?.activeAccountId || "") {
+  const data = {};
+  ACCOUNT_DATA_KEYS.forEach((key) => {
+    data[key] = stateLike?.[key];
+  });
+  return normalizeAccountData(data, accountId);
+}
+
+function normalizeAccount(rawAccount, index = 0) {
+  const id = typeof rawAccount?.id === "string" && rawAccount.id.trim()
+    ? rawAccount.id.trim()
+    : createAccountId();
+  const name = accountDisplayName(rawAccount, index === 0 ? DEFAULT_ACCOUNT_NAME : `アカウント${index + 1}`);
+  const createdAt = typeof rawAccount?.createdAt === "string" && rawAccount.createdAt.trim()
+    ? rawAccount.createdAt
+    : new Date().toISOString();
+  return {
+    id,
+    name,
+    createdAt,
+    data: normalizeAccountData(rawAccount?.data || rawAccount, id),
+  };
+}
+
+function normalizeAccounts(rawAccounts) {
+  if (!Array.isArray(rawAccounts) || rawAccounts.length === 0) {
+    return [normalizeAccount({ name: DEFAULT_ACCOUNT_NAME, data: defaultState() })];
+  }
+  const seen = new Set();
+  const accounts = rawAccounts
+    .map((account, index) => normalizeAccount(account, index))
+    .filter((account) => {
+      if (seen.has(account.id)) return false;
+      seen.add(account.id);
+      return true;
+    })
+    .slice(0, 12);
+  return accounts.length ? accounts : [normalizeAccount({ name: DEFAULT_ACCOUNT_NAME, data: defaultState() })];
+}
+
+function normalizeRootState(raw) {
+  const source = raw && typeof raw === "object" ? raw : null;
+  const hasAccounts = Array.isArray(source?.accounts);
+  const accounts = hasAccounts
+    ? normalizeAccounts(source.accounts)
+    : [normalizeAccount({
+      id: createAccountId(),
+      name: DEFAULT_ACCOUNT_NAME,
+      createdAt: new Date().toISOString(),
+      data: normalizeAccountData(source || defaultState()),
+    })];
+  const activeAccountId = accounts.some((account) => account.id === source?.activeAccountId)
+    ? source.activeAccountId
+    : accounts[0].id;
+  return {
+    accounts,
+    activeAccountId,
+    deviceName: typeof source?.deviceName === "string" ? source.deviceName.trim().slice(0, 30) : "",
+  };
+}
+
+function hydrateState(root) {
+  const normalizedRoot = normalizeRootState(root);
+  const activeAccount = normalizedRoot.accounts.find((account) => account.id === normalizedRoot.activeAccountId) || normalizedRoot.accounts[0];
+  return {
+    ...activeAccount.data,
+    accounts: normalizedRoot.accounts,
+    activeAccountId: activeAccount.id,
+    deviceName: normalizedRoot.deviceName,
+  };
+}
+
+function serializeState(stateLike) {
+  const root = normalizeRootState(stateLike);
+  const activeAccountId = root.activeAccountId;
+  const activeData = extractAccountData(stateLike, activeAccountId);
+  const accounts = root.accounts.map((account) => (
+    account.id === activeAccountId ? { ...account, data: activeData } : account
+  ));
+  return {
+    accounts,
+    activeAccountId,
+    deviceName: typeof stateLike?.deviceName === "string" ? stateLike.deviceName.trim().slice(0, 30) : "",
   };
 }
 
@@ -385,9 +517,9 @@ function normalizeSound(rawSound, baseSound = defaultState().sound) {
 
 function loadState() {
   try {
-    return normalizeState(JSON.parse(localStorage.getItem(STORAGE_KEY)));
+    return hydrateState(normalizeRootState(JSON.parse(localStorage.getItem(STORAGE_KEY))));
   } catch {
-    return defaultState();
+    return hydrateState(normalizeRootState(null));
   }
 }
 
@@ -642,6 +774,7 @@ function App() {
   const [nowTick, setNowTick] = useState(Date.now());
   const [soundPanelOpen, setSoundPanelOpen] = useState(false);
   const [dataManagerOpen, setDataManagerOpen] = useState(false);
+  const [accountManagerOpen, setAccountManagerOpen] = useState(false);
   const [pendingCompletion, setPendingCompletion] = useState(null);
   const [rewardToast, setRewardToast] = useState(null);
   const [bgmLibraryMessage, setBgmLibraryMessage] = useState("");
@@ -657,6 +790,7 @@ function App() {
   const pendingAutoTimeoutRef = useRef(null);
   const rewardToastTimeoutRef = useRef(null);
   const wakeLockRef = useRef(null);
+  const activeAccount = state.accounts?.find((account) => account.id === state.activeAccountId) || state.accounts?.[0] || null;
   const activeOutfit = OUTFITS.find((item) => item.id === state.selectedOutfitId) || OUTFITS[0];
   const subjects = state.subjects?.length ? state.subjects : DEFAULT_SUBJECTS;
   const selectedSubject = subjects.find((item) => item.id === state.selectedSubject) || subjects[0];
@@ -673,7 +807,7 @@ function App() {
 
   useEffect(() => {
     stateRef.current = state;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState(state)));
   }, [state]);
 
   useEffect(() => {
@@ -1092,10 +1226,10 @@ function App() {
         customTracks,
       };
       await saveJsonFile(bgmLibraryFileName(), payload);
-      setBgmLibraryMessage(`BGM音楽集を書き出しました（追加BGM ${customTracks.length}件）`);
+      setBgmLibraryMessage(`プレイリストを書き出しました（追加BGM ${customTracks.length}件）`);
     } catch (error) {
       if (error?.name === "AbortError") return;
-      setBgmLibraryMessage("BGM音楽集を書き出せませんでした。容量や端末の空き容量を確認してください");
+      setBgmLibraryMessage("プレイリストを書き出せませんでした。容量や端末の空き容量を確認してください");
     }
   }
 
@@ -1108,7 +1242,7 @@ function App() {
         if (parsed?.app !== "tama-study-timer-bgm-library" || !Array.isArray(parsed.playlists)) {
           throw new Error("invalid bgm library payload");
         }
-        const ok = window.confirm("BGM音楽集をこの端末に読み込みます。既存の勉強記録は消えません。");
+        const ok = window.confirm(`BGM音楽集を現在のアカウント「${accountDisplayName(activeAccount)}」に読み込みます。既存の勉強記録は消えません。`);
         if (!ok) return;
         const importedTracks = [];
         for (const track of parsed.customTracks || []) {
@@ -1149,13 +1283,13 @@ function App() {
             ? parsed.selectedPlaylistId
             : sound.selectedPlaylistId,
         }));
-        setBgmLibraryMessage(`BGM音楽集を読み込みました（プレイリスト ${importedPlaylists.length}件、追加BGM ${importedTracks.length}件）`);
+        setBgmLibraryMessage(`プレイリストを読み込みました（プレイリスト ${importedPlaylists.length}件、追加BGM ${importedTracks.length}件）`);
       } catch {
-        setBgmLibraryMessage("BGM音楽集を読み込めませんでした。移植用JSONファイルか確認してください。");
+        setBgmLibraryMessage("BGM音楽集JSONを選んでください。");
       }
     };
     reader.onerror = () => {
-      setBgmLibraryMessage("BGM音楽集を読み込めませんでした。");
+      setBgmLibraryMessage("BGM音楽集JSONを読み込めませんでした。");
     };
     reader.readAsText(file);
   }
@@ -1240,6 +1374,7 @@ function App() {
     const reward = rewardFor(minutes);
     return {
       id: createRecordId(),
+      accountId: current.activeAccountId,
       date: todayKey(),
       subject: current.selectedSubject,
       mode: current.timer.mode,
@@ -1331,11 +1466,14 @@ function App() {
   }
 
   async function exportBackup() {
+    const root = serializeState(state);
+    const active = root.accounts.find((account) => account.id === root.activeAccountId) || root.accounts[0];
     const payload = {
-      app: "tama-study-timer",
+      app: "tama-study-timer-account-backup",
       version: BACKUP_VERSION,
       exportedAt: new Date().toISOString(),
-      data: normalizeState(state),
+      deviceName: root.deviceName || "この端末",
+      account: active,
     };
     try {
       await saveJsonFile(backupFileName(), payload);
@@ -1347,11 +1485,15 @@ function App() {
   }
 
   async function exportTodayRecords() {
-    const records = normalizeSessions(state.sessions).filter((session) => session.date === todayKey());
+    const records = normalizeSessions(state.sessions, state.activeAccountId)
+      .filter((session) => session.date === todayKey())
+      .map((session) => ({ ...session, accountId: state.activeAccountId }));
     const payload = {
       appVersion: APP_VERSION,
       exportedAt: new Date().toISOString(),
       deviceName: state.deviceName?.trim() || "この端末",
+      accountId: state.activeAccountId,
+      accountName: accountDisplayName(activeAccount),
       records,
     };
     try {
@@ -1374,11 +1516,13 @@ function App() {
           throw new Error("invalid records payload");
         }
         const today = todayKey();
-        const incomingRecords = normalizeSessions(parsed.records).filter((session) => session.date === today);
-        const ok = window.confirm("この端末の記録に追加します。既存データは消えません。");
+        const incomingRecords = normalizeSessions(parsed.records, stateRef.current.activeAccountId)
+          .filter((session) => session.date === today)
+          .map((session) => ({ ...session, accountId: stateRef.current.activeAccountId }));
+        const ok = window.confirm(`現在のアカウント「${accountDisplayName(activeAccount)}」の記録に追加します。既存データは消えません。`);
         if (!ok) return;
         const current = stateRef.current;
-        const existingSessions = normalizeSessions(current.sessions);
+        const existingSessions = normalizeSessions(current.sessions, current.activeAccountId);
         const existingIds = new Set(existingSessions.map((session) => session.id));
         const additions = [];
         let skipped = 0;
@@ -1411,16 +1555,27 @@ function App() {
     reader.onload = () => {
       try {
         const parsed = JSON.parse(String(reader.result || ""));
-        const rawData = parsed?.app === "tama-study-timer" && parsed?.data ? parsed.data : parsed;
-        const restored = normalizeState(rawData);
-        const ok = window.confirm("現在の端末内データを、選んだバックアップで上書きします。よろしいですか？");
+        const root = serializeState(stateRef.current);
+        const active = root.accounts.find((account) => account.id === root.activeAccountId) || root.accounts[0];
+        const rawData = parsed?.app === "tama-study-timer-account-backup" && parsed?.account?.data
+          ? parsed.account.data
+          : parsed?.app === "tama-study-timer" && parsed?.data
+            ? parsed.data
+            : parsed;
+        const restoredData = normalizeAccountData(rawData, active.id);
+        const ok = window.confirm(`現在のアカウント「${accountDisplayName(active)}」のデータを、選んだバックアップで上書きします。他のアカウントは変更されません。よろしいですか？`);
         if (!ok) return;
         stopBgm();
         stopAlarm();
         clearPendingAutoCompletion();
         releaseWakeLock();
         setPendingCompletion(null);
-        setState(restored);
+        setState(hydrateState({
+          ...root,
+          accounts: root.accounts.map((account) => (
+            account.id === active.id ? { ...account, data: restoredData } : account
+          )),
+        }));
         setDataManagerOpen(false);
         setTab("home");
       } catch {
@@ -1557,6 +1712,81 @@ function App() {
     }));
   }
 
+  function stopActiveActivity() {
+    stopBgm();
+    stopAlarm();
+    clearPendingAutoCompletion();
+    releaseWakeLock();
+    setPendingCompletion(null);
+    setSoundPanelOpen(false);
+  }
+
+  function switchAccount(accountId) {
+    const root = serializeState(stateRef.current);
+    const target = root.accounts.find((account) => account.id === accountId);
+    if (!target || target.id === root.activeAccountId) {
+      setAccountManagerOpen(false);
+      return;
+    }
+    stopActiveActivity();
+    const nextRoot = { ...root, activeAccountId: target.id };
+    setState(hydrateState(nextRoot));
+    setTab("home");
+    setAccountManagerOpen(false);
+  }
+
+  function createAccount() {
+    const root = serializeState(stateRef.current);
+    const id = createAccountId();
+    const account = normalizeAccount({
+      id,
+      name: `アカウント${root.accounts.length + 1}`,
+      createdAt: new Date().toISOString(),
+      data: defaultState(),
+    }, root.accounts.length);
+    stopActiveActivity();
+    setState(hydrateState({
+      ...root,
+      accounts: [...root.accounts, account],
+      activeAccountId: account.id,
+    }));
+    setTab("home");
+  }
+
+  function renameAccount(accountId, name) {
+    const cleaned = name.trim().slice(0, 20);
+    setState((current) => {
+      const root = serializeState(current);
+      return hydrateState({
+        ...root,
+        accounts: root.accounts.map((account) => (
+          account.id === accountId ? { ...account, name: cleaned || account.name } : account
+        )),
+      });
+    });
+  }
+
+  async function deleteAccount(accountId) {
+    const root = serializeState(stateRef.current);
+    if (root.accounts.length <= 1) return;
+    const target = root.accounts.find((account) => account.id === accountId);
+    if (!target) return;
+    const ok = window.confirm(`アカウント「${accountDisplayName(target)}」を削除します。このアカウントの記録・pt・BGM設定は元に戻せません。削除しますか？`);
+    if (!ok) return;
+    stopActiveActivity();
+    const remainingAccounts = root.accounts.filter((account) => account.id !== accountId);
+    const nextActiveAccountId = root.activeAccountId === accountId ? remainingAccounts[0].id : root.activeAccountId;
+    setState(hydrateState({
+      ...root,
+      accounts: remainingAccounts,
+      activeAccountId: nextActiveAccountId,
+    }));
+    const remainingTrackIds = new Set(remainingAccounts.flatMap((account) => account.data?.sound?.customTracks?.map((track) => track.id) || []));
+    const deletedTrackIds = target.data?.sound?.customTracks?.map((track) => track.id) || [];
+    await Promise.all(deletedTrackIds.filter((trackId) => !remainingTrackIds.has(trackId)).map((trackId) => deleteBgmBlob(trackId).catch(() => {})));
+    setTab("home");
+  }
+
   return (
     <main className="stage">
       <div className="showcase" aria-label={state.appName || "たまの勉強タイマー"}>
@@ -1573,6 +1803,8 @@ function App() {
               setSubject={(id) => setState((current) => ({ ...current, selectedSubject: id }))}
               onTitleChange={updateAppName}
               updateDailyGoal={updateDailyGoal}
+              accountName={accountDisplayName(activeAccount)}
+              openAccountManager={() => setAccountManagerOpen(true)}
             />
           )}
           {tab === "timer" && (
@@ -1624,6 +1856,7 @@ function App() {
               updateDeviceName={updateDeviceName}
               exportTodayRecords={exportTodayRecords}
               importDailyRecordsFile={importDailyRecordsFile}
+              openAccountManager={() => setAccountManagerOpen(true)}
             />
           )}
           {tab === "bgm-library" && (
@@ -1674,9 +1907,21 @@ function App() {
           <BottomNav active={tab} setTab={setTab} />
           {dataManagerOpen && (
             <DataManagementSheet
+              accountName={accountDisplayName(activeAccount)}
               onExport={exportBackup}
               onImport={importBackupFile}
               onClose={() => setDataManagerOpen(false)}
+            />
+          )}
+          {accountManagerOpen && (
+            <AccountManagementSheet
+              accounts={state.accounts || []}
+              activeAccountId={state.activeAccountId}
+              onCreate={createAccount}
+              onRename={renameAccount}
+              onSwitch={switchAccount}
+              onDelete={deleteAccount}
+              onClose={() => setAccountManagerOpen(false)}
             />
           )}
         </PhoneFrame>
@@ -1773,7 +2018,7 @@ function TopBar({ title, points, onBack, rightIcon = "music", avatarSrc, onSound
   );
 }
 
-function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startTimer, setSubject, onTitleChange, updateDailyGoal }) {
+function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startTimer, setSubject, onTitleChange, updateDailyGoal, accountName, openAccountManager }) {
   const [goalOpen, setGoalOpen] = useState(false);
   const [goalHours, setGoalHours] = useState(String(Math.floor((state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES) / 60)));
   const [goalMinutes, setGoalMinutes] = useState(String((state.dailyGoalMinutes || DEFAULT_DAILY_GOAL_MINUTES) % 60));
@@ -1801,6 +2046,10 @@ function HomeScreen({ state, subjects, outfit, subject, progress, setTab, startT
         avatarSrc={asset(`avatar/full/${outfit.id}.png`)}
         onTitleChange={onTitleChange}
       />
+      <button className="account-chip" type="button" onClick={openAccountManager}>
+        <Users size={15} />
+        <span>{accountName}</span>
+      </button>
       <section className="hero-card" style={{ "--hero-room-bg": `url(${asset("crops/home-bg.png")})` }}>
         <div className="hero-copy">
           <span>今日の勉強時間</span>
@@ -1898,7 +2147,7 @@ function QuickTile({ icon, label, onClick }) {
   );
 }
 
-function DataManagementSheet({ onExport, onImport, onClose }) {
+function DataManagementSheet({ accountName, onExport, onImport, onClose }) {
   const inputId = "backup-file-input";
 
   return (
@@ -1908,7 +2157,7 @@ function DataManagementSheet({ onExport, onImport, onClose }) {
         <div className="sheet-head">
           <div>
             <span><Download size={16} />データ管理</span>
-            <small>端末内の記録をJSONで保存・復元できます</small>
+            <small>現在のアカウントだけをJSONで保存・復元できます</small>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="閉じる">×</button>
         </div>
@@ -1916,12 +2165,12 @@ function DataManagementSheet({ onExport, onImport, onClose }) {
           <button className="backup-action primary" type="button" onClick={onExport}>
             <Download size={18} />
             <span>バックアップを保存</span>
-            <small>記録・設定・ごほうび・ptを書き出します</small>
+            <small>「{accountName}」の記録・設定・ごほうび・ptを書き出します</small>
           </button>
           <label className="backup-action" htmlFor={inputId}>
             <Upload size={18} />
             <span>バックアップから復元</span>
-            <small>選んだJSONで現在の端末内データを上書きします</small>
+            <small>選んだJSONで「{accountName}」だけを上書きします</small>
           </label>
           <input
             id={inputId}
@@ -1935,13 +2184,13 @@ function DataManagementSheet({ onExport, onImport, onClose }) {
             }}
           />
         </div>
-        <p className="backup-note">追加したBGMファイル本体は端末内だけに残ります。復元前に今のデータも必要なら、先にバックアップを保存してください。</p>
+        <p className="backup-note">他のアカウントは変更されません。追加したBGMファイル本体は、必要に応じてBGM音楽集から別途移植してください。</p>
       </section>
     </div>
   );
 }
 
-function SettingsScreen({ state, setTab, openDataManager, recordSyncMessage, updateDeviceName, exportTodayRecords, importDailyRecordsFile }) {
+function SettingsScreen({ state, setTab, openDataManager, recordSyncMessage, updateDeviceName, exportTodayRecords, importDailyRecordsFile, openAccountManager }) {
   const importInputRef = useRef(null);
 
   return (
@@ -1980,6 +2229,14 @@ function SettingsScreen({ state, setTab, openDataManager, recordSyncMessage, upd
           />
         </div>
         {recordSyncMessage && <p className="record-sync-message">{recordSyncMessage}</p>}
+        <button className="settings-row-button" type="button" onClick={openAccountManager}>
+          <span className="settings-row-icon"><Users size={22} /></span>
+          <span>
+            <strong>アカウント管理</strong>
+            <small>家族やユーザーごとに記録と設定を切り替えます</small>
+          </span>
+          <ChevronLeft size={18} />
+        </button>
         <button className="settings-row-button" type="button" onClick={() => setTab("bgm-library")}>
           <span className="settings-row-icon"><ListMusic size={22} /></span>
           <span>
@@ -2003,6 +2260,55 @@ function SettingsScreen({ state, setTab, openDataManager, recordSyncMessage, upd
             <small>端末内の勉強記録と設定を初期化します</small>
           </span>
         </button>
+      </section>
+    </div>
+  );
+}
+
+function AccountManagementSheet({ accounts, activeAccountId, onCreate, onRename, onSwitch, onDelete, onClose }) {
+  return (
+    <div className="chart-settings-overlay" role="dialog" aria-modal="true" aria-label="アカウント管理">
+      <button className="settings-scrim" type="button" aria-label="閉じる" onClick={onClose} />
+      <section className="chart-settings-sheet compact-picker-sheet account-management-sheet">
+        <div className="sheet-head">
+          <div>
+            <span><Users size={16} />アカウント管理</span>
+            <small>記録・pt・衣装・BGM設定をアカウントごとに分けます</small>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="閉じる">×</button>
+        </div>
+        <div className="account-list">
+          {accounts.map((account) => {
+            const isActive = account.id === activeAccountId;
+            return (
+              <article className={isActive ? "account-row active" : "account-row"} key={account.id}>
+                <button className="account-avatar-button" type="button" onClick={() => onSwitch(account.id)} aria-label={`${accountDisplayName(account)}に切り替え`}>
+                  {isActive ? <Check size={19} /> : <Users size={18} />}
+                </button>
+                <label>
+                  <span>アカウント名</span>
+                  <input
+                    type="text"
+                    value={accountDisplayName(account)}
+                    maxLength={20}
+                    onChange={(event) => onRename(account.id, event.target.value)}
+                  />
+                </label>
+                <button className="account-switch-button" type="button" onClick={() => onSwitch(account.id)} disabled={isActive}>
+                  {isActive ? "使用中" : "切替"}
+                </button>
+                <button className="account-delete-button" type="button" onClick={() => onDelete(account.id)} disabled={accounts.length <= 1} aria-label="アカウントを削除">
+                  <Trash2 size={17} />
+                </button>
+              </article>
+            );
+          })}
+        </div>
+        <button className="account-create-button" type="button" onClick={onCreate}>
+          <Plus size={18} />
+          新しいアカウントを作る
+        </button>
+        <p className="backup-note">最後の1つのアカウントは削除できません。切り替えるとタイマーと音は停止します。</p>
       </section>
     </div>
   );
@@ -2049,16 +2355,16 @@ function BgmLibraryScreen({
       <section className="bgm-panel">
         <div className="section-head">
           <b>iCloudで移植</b>
-          <span className="small-note">音源もまとめて移せます</span>
+          <span className="small-note">現在のアカウント用です</span>
         </div>
         <div className="bgm-transfer-actions">
           <button className="bgm-transfer-button primary" type="button" onClick={exportLibrary}>
             <Download size={18} />
-            <span>音楽集を書き出す</span>
+            <span>プレイリストを書き出す</span>
           </button>
           <button className="bgm-transfer-button" type="button" onClick={() => importLibraryInputRef.current?.click()}>
             <Upload size={18} />
-            <span>音楽集を読み込む</span>
+            <span>プレイリストを読み込む</span>
           </button>
           <input
             ref={importLibraryInputRef}
@@ -2072,7 +2378,7 @@ function BgmLibraryScreen({
             }}
           />
         </div>
-        <p className="bgm-transfer-note">書き出し後に共有画面が開いたら「ファイルに保存」からiCloud Driveなど保存先を選べます。別端末ではこの画面から読み込んでください。</p>
+        <p className="bgm-transfer-note">他の端末で書き出したBGM音楽集JSONをここから読み込めます。書き出し後は「ファイルに保存」からiCloud Driveなどを選べます。</p>
       </section>
       <section className="bgm-panel">
         <div className="section-head">
