@@ -743,8 +743,46 @@ async function dataUrlToBlob(dataUrl) {
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
     throw new Error("invalid data url");
   }
-  const response = await fetch(dataUrl);
-  return response.blob();
+  const match = dataUrl.match(/^data:([^;,]*)(;base64)?,(.*)$/s);
+  if (!match) throw new Error("invalid data url");
+  const mimeType = match[1] || "application/octet-stream";
+  const isBase64 = Boolean(match[2]);
+  const payload = match[3] || "";
+  if (!isBase64) {
+    return new Blob([decodeURIComponent(payload)], { type: mimeType });
+  }
+  const binary = atob(payload.replace(/\s/g, ""));
+  const chunks = [];
+  const chunkSize = 1024 * 512;
+  for (let offset = 0; offset < binary.length; offset += chunkSize) {
+    const slice = binary.slice(offset, offset + chunkSize);
+    const bytes = new Uint8Array(slice.length);
+    for (let index = 0; index < slice.length; index += 1) {
+      bytes[index] = slice.charCodeAt(index);
+    }
+    chunks.push(bytes);
+  }
+  return new Blob(chunks, { type: mimeType });
+}
+
+function extractBgmLibraryPayload(parsed) {
+  if (!parsed || typeof parsed !== "object") return null;
+  if (Array.isArray(parsed.playlists)) {
+    return parsed;
+  }
+  const sound = parsed.sound || parsed.data?.sound || parsed.account?.data?.sound;
+  if (sound && Array.isArray(sound.playlists)) {
+    return {
+      app: "tama-study-timer-bgm-library",
+      appVersion: parsed.appVersion || parsed.version || APP_VERSION,
+      exportedAt: parsed.exportedAt || new Date().toISOString(),
+      deviceName: parsed.deviceName || "この端末",
+      selectedPlaylistId: sound.selectedPlaylistId,
+      playlists: sound.playlists,
+      customTracks: sound.customTracks || [],
+    };
+  }
+  return null;
 }
 
 async function saveJsonFile(filename, payload) {
@@ -1239,35 +1277,49 @@ function App() {
     reader.onload = async () => {
       try {
         const parsed = JSON.parse(String(reader.result || ""));
-        if (parsed?.app !== "tama-study-timer-bgm-library" || !Array.isArray(parsed.playlists)) {
+        const library = extractBgmLibraryPayload(parsed);
+        if (!library || !Array.isArray(library.playlists)) {
           throw new Error("invalid bgm library payload");
         }
         const ok = window.confirm(`BGM音楽集を現在のアカウント「${accountDisplayName(activeAccount)}」に読み込みます。既存の勉強記録は消えません。`);
         if (!ok) return;
         const importedTracks = [];
-        for (const track of parsed.customTracks || []) {
-          if (!track?.id || !track?.dataUrl) continue;
-          const blob = await dataUrlToBlob(track.dataUrl);
-          await putBgmBlob(track.id, blob);
-          importedTracks.push({
-            id: String(track.id),
-            name: typeof track.name === "string" && track.name.trim() ? track.name.trim().slice(0, 80) : "追加BGM",
-            kind: track.kind === "video" ? "video" : "audio",
-            type: "custom",
-            mimeType: typeof track.mimeType === "string" ? track.mimeType : blob.type,
-            createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
-          });
+        let failedTracks = 0;
+        for (const track of library.customTracks || []) {
+          if (!track?.id || !track?.dataUrl) {
+            failedTracks += track?.id && !track?.dataUrl ? 1 : 0;
+            continue;
+          }
+          try {
+            const blob = await dataUrlToBlob(track.dataUrl);
+            await putBgmBlob(track.id, blob);
+            importedTracks.push({
+              id: String(track.id),
+              name: typeof track.name === "string" && track.name.trim() ? track.name.trim().slice(0, 80) : "追加BGM",
+              kind: track.kind === "video" ? "video" : "audio",
+              type: "custom",
+              mimeType: typeof track.mimeType === "string" ? track.mimeType : blob.type,
+              createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
+            });
+          } catch {
+            failedTracks += 1;
+          }
         }
         const importedTrackIds = new Set(importedTracks.map((track) => track.id));
-        const importedPlaylists = (parsed.playlists || [])
+        const existingCustomTrackIds = new Set((state.sound?.customTracks || []).map((track) => track.id));
+        const importedPlaylists = (library.playlists || [])
           .filter((playlist) => playlist?.id && Array.isArray(playlist.trackIds))
           .map((playlist, index) => ({
             id: String(playlist.id),
             name: typeof playlist.name === "string" && playlist.name.trim() ? playlist.name.trim().slice(0, 30) : `移植プレイリスト${index + 1}`,
             trackIds: playlist.trackIds.filter((trackId) => (
-              STANDARD_BGM_TRACK_IDS.includes(trackId) || importedTrackIds.has(trackId) || (state.sound?.customTracks || []).some((track) => track.id === trackId)
+              STANDARD_BGM_TRACK_IDS.includes(trackId) || importedTrackIds.has(trackId) || existingCustomTrackIds.has(trackId)
             )),
-          }));
+          }))
+          .filter((playlist) => playlist.trackIds.length > 0);
+        if (!importedPlaylists.length && !importedTracks.length) {
+          throw new Error("empty bgm library payload");
+        }
         const importedPlaylistIds = new Set(importedPlaylists.map((playlist) => playlist.id));
         updateBgmSound((sound) => ({
           ...sound,
@@ -1279,13 +1331,13 @@ function App() {
             ...(sound.playlists || []).filter((playlist) => !importedPlaylistIds.has(playlist.id)),
             ...importedPlaylists,
           ],
-          selectedPlaylistId: importedPlaylistIds.has(parsed.selectedPlaylistId)
-            ? parsed.selectedPlaylistId
+          selectedPlaylistId: importedPlaylistIds.has(library.selectedPlaylistId)
+            ? library.selectedPlaylistId
             : sound.selectedPlaylistId,
         }));
-        setBgmLibraryMessage(`プレイリストを読み込みました（プレイリスト ${importedPlaylists.length}件、追加BGM ${importedTracks.length}件）`);
+        setBgmLibraryMessage(`プレイリストを読み込みました（プレイリスト ${importedPlaylists.length}件、追加BGM ${importedTracks.length}件${failedTracks ? `、${failedTracks}件スキップ` : ""}）`);
       } catch {
-        setBgmLibraryMessage("BGM音楽集JSONを選んでください。");
+        setBgmLibraryMessage("BGM音楽集を読み込めませんでした。プレイリストを書き出したJSONファイルか確認してください。");
       }
     };
     reader.onerror = () => {
