@@ -44,6 +44,8 @@ const BGM_DB_VERSION = 1;
 const BGM_STORE_NAME = "tracks";
 const BGM_EXPORT_MAX_BLOB_BYTES = 18 * 1024 * 1024;
 const VIDEO_AUDIO_TARGET_SAMPLE_RATE = 22050;
+const VIDEO_COMPACT_MAX_WIDTH = 480;
+const VIDEO_COMPACT_FPS = 18;
 const STANDARD_BGM_TRACKS = [
   { id: "standard-bgm-1", name: "標準BGM 1", kind: "audio", type: "standard", src: "audio/study-bgm-1.mp3", mimeType: "audio/mpeg" },
   { id: "standard-bgm-2", name: "標準BGM 2", kind: "audio", type: "standard", src: "audio/study-bgm-2.mp3", mimeType: "audio/mpeg" },
@@ -477,7 +479,20 @@ function normalizeSound(rawSound, baseSound = defaultState().sound) {
       const kind = track?.kind === "video" ? "video" : "audio";
       const mimeType = typeof track?.mimeType === "string" ? track.mimeType : "";
       const createdAt = typeof track?.createdAt === "string" ? track.createdAt : new Date().toISOString();
-      return { id, name, kind, type: "custom", mimeType, createdAt };
+      const sourceKind = track?.sourceKind === "video" ? "video" : "";
+      const videoProcess = ["audio", "compact-video", "original-video"].includes(track?.videoProcess) ? track.videoProcess : "";
+      const originalFileName = typeof track?.originalFileName === "string" ? track.originalFileName.slice(0, 120) : "";
+      return {
+        id,
+        name,
+        kind,
+        type: "custom",
+        mimeType,
+        createdAt,
+        ...(sourceKind ? { sourceKind } : {}),
+        ...(videoProcess ? { videoProcess } : {}),
+        ...(originalFileName ? { originalFileName } : {}),
+      };
     })
     .filter(Boolean)
     .slice(0, 80);
@@ -705,6 +720,147 @@ async function tryConvertVideoToAudioBlob(file) {
     return encodeMonoWavFromAudioBuffer(decoded);
   } finally {
     context.close?.();
+  }
+}
+
+function pickMediaRecorderMimeType() {
+  if (!window.MediaRecorder) return "";
+  const types = [
+    "video/mp4;codecs=avc1.42E01E,mp4a.40.2",
+    "video/mp4",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  return types.find((type) => window.MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+function loadVideoMetadata(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.onloadedmetadata = () => {
+      const width = video.videoWidth || VIDEO_COMPACT_MAX_WIDTH;
+      const height = video.videoHeight || VIDEO_COMPACT_MAX_WIDTH;
+      const duration = Number.isFinite(video.duration) ? video.duration : 0;
+      URL.revokeObjectURL(url);
+      resolve({ width, height, duration });
+    };
+    video.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("video metadata unavailable"));
+    };
+    video.src = url;
+  });
+}
+
+async function tryCompactVideoBlob(file) {
+  const mimeType = pickMediaRecorderMimeType();
+  if (!mimeType) throw new Error("media recorder unavailable");
+  const metadata = await loadVideoMetadata(file);
+  const scale = Math.min(1, VIDEO_COMPACT_MAX_WIDTH / Math.max(1, metadata.width));
+  const width = Math.max(1, Math.round(metadata.width * scale));
+  const height = Math.max(1, Math.round(metadata.height * scale));
+  const url = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context || !canvas.captureStream) {
+    URL.revokeObjectURL(url);
+    throw new Error("canvas capture unavailable");
+  }
+
+  await new Promise((resolve, reject) => {
+    video.onloadeddata = resolve;
+    video.onerror = () => reject(new Error("video load unavailable"));
+    video.src = url;
+  });
+
+  const outputStream = canvas.captureStream(VIDEO_COMPACT_FPS);
+  const audioContext = createAudioContext();
+  if (audioContext?.createMediaElementSource && audioContext?.createMediaStreamDestination) {
+    try {
+      const source = audioContext.createMediaElementSource(video);
+      const destination = audioContext.createMediaStreamDestination();
+      source.connect(destination);
+      destination.stream.getAudioTracks().forEach((track) => outputStream.addTrack(track));
+    } catch {
+      // Keep the resized video even if the browser will not expose the audio track.
+    }
+  }
+
+  const chunks = [];
+  const recorder = new MediaRecorder(outputStream, {
+    mimeType,
+    videoBitsPerSecond: 450_000,
+  });
+  const done = new Promise((resolve, reject) => {
+    recorder.ondataavailable = (event) => {
+      if (event.data?.size) chunks.push(event.data);
+    };
+    recorder.onstop = resolve;
+    recorder.onerror = () => reject(recorder.error || new Error("video compact unavailable"));
+  });
+
+  let drawTimer = null;
+  function drawFrame() {
+    context.drawImage(video, 0, 0, width, height);
+  }
+
+  recorder.start(1000);
+  drawTimer = window.setInterval(drawFrame, Math.round(1000 / VIDEO_COMPACT_FPS));
+  drawFrame();
+  await video.play();
+  await new Promise((resolve) => {
+    video.onended = resolve;
+    const maxDuration = metadata.duration ? (metadata.duration + 1) * 1000 : 180000;
+    window.setTimeout(resolve, maxDuration);
+  });
+  if (recorder.state !== "inactive") recorder.stop();
+  await done;
+  if (drawTimer) window.clearInterval(drawTimer);
+  video.pause();
+  audioContext?.close?.();
+  URL.revokeObjectURL(url);
+
+  if (!chunks.length) throw new Error("video compact empty");
+  return new Blob(chunks, { type: recorder.mimeType || mimeType });
+}
+
+async function prepareVideoBgmBlob(file) {
+  try {
+    const audioBlob = await tryConvertVideoToAudioBlob(file);
+    return {
+      blob: audioBlob,
+      kind: "audio",
+      mimeType: audioBlob.type || "audio/wav",
+      status: "audio",
+    };
+  } catch {
+    // Try a smaller video when the browser cannot decode audio directly from the video file.
+  }
+  try {
+    const compactBlob = await tryCompactVideoBlob(file);
+    return {
+      blob: compactBlob,
+      kind: "video",
+      mimeType: compactBlob.type || "video/mp4",
+      status: "compact-video",
+    };
+  } catch {
+    return {
+      blob: file,
+      kind: "video",
+      mimeType: file.type,
+      status: "original-video",
+    };
   }
 }
 
@@ -949,6 +1105,8 @@ function App() {
   const bgmCurrentTrackIdRef = useRef(null);
   const bgmObjectUrlRef = useRef(null);
   const bgmPreviewTimeoutRef = useRef(null);
+  const bgmLibraryPreviewRef = useRef(null);
+  const bgmLibraryPreviewUrlRef = useRef(null);
   const alarmTimeoutsRef = useRef([]);
   const pendingAutoTimeoutRef = useRef(null);
   const rewardToastTimeoutRef = useRef(null);
@@ -1023,6 +1181,7 @@ function App() {
 
   useEffect(() => () => {
     stopBgm();
+    stopBgmLibraryPreview();
     if (bgmObjectUrlRef.current) URL.revokeObjectURL(bgmObjectUrlRef.current);
     stopAlarm();
     clearPendingAutoCompletion();
@@ -1147,6 +1306,55 @@ function App() {
     }
     if (audio) audio.pause();
     releaseWakeLock();
+  }
+
+  function stopBgmLibraryPreview() {
+    const media = bgmLibraryPreviewRef.current;
+    if (media) {
+      media.pause();
+      media.src = "";
+    }
+    bgmLibraryPreviewRef.current = null;
+    if (bgmLibraryPreviewUrlRef.current) {
+      URL.revokeObjectURL(bgmLibraryPreviewUrlRef.current);
+      bgmLibraryPreviewUrlRef.current = null;
+    }
+  }
+
+  async function toggleBgmLibraryPreview(trackId) {
+    const track = findBgmTrack(trackId);
+    if (!track) return;
+    if (bgmLibraryPreviewRef.current?.dataset?.trackId === trackId && !bgmLibraryPreviewRef.current.paused) {
+      stopBgmLibraryPreview();
+      setBgmLibraryMessage("試聴を停止しました");
+      return;
+    }
+    stopBgmLibraryPreview();
+    try {
+      const media = document.createElement(track.kind === "video" ? "video" : "audio");
+      media.dataset.trackId = trackId;
+      media.volume = 0.42;
+      media.playsInline = true;
+      media.preload = "auto";
+      media.onended = () => {
+        stopBgmLibraryPreview();
+        setBgmLibraryMessage("試聴が終わりました");
+      };
+      if (track.type === "standard") {
+        media.src = track.src;
+      } else {
+        const blob = await getBgmBlob(track.id);
+        if (!blob) throw new Error("missing bgm blob");
+        bgmLibraryPreviewUrlRef.current = URL.createObjectURL(blob);
+        media.src = bgmLibraryPreviewUrlRef.current;
+      }
+      bgmLibraryPreviewRef.current = media;
+      await media.play();
+      setBgmLibraryMessage(`「${track.name}」を試聴中です`);
+    } catch {
+      stopBgmLibraryPreview();
+      setBgmLibraryMessage("このBGMは試聴できませんでした");
+    }
   }
 
   async function requestWakeLock() {
@@ -1313,6 +1521,16 @@ function App() {
     }));
   }
 
+  function renameCustomBgmTrack(trackId, name) {
+    const nextName = name.slice(0, 80);
+    updateBgmSound((sound) => ({
+      ...sound,
+      customTracks: (sound.customTracks || []).map((track) => (
+        track.id === trackId ? { ...track, name: nextName } : track
+      )),
+    }));
+  }
+
   async function addBgmFiles(files, playlistId) {
     const selectedFiles = Array.from(files || [])
       .map((file) => ({ file, kind: inferBgmKind(file) }))
@@ -1322,8 +1540,9 @@ function App() {
       return;
     }
     const addedTracks = [];
-    let convertedVideos = 0;
-    let keptVideos = 0;
+    let extractedVideos = 0;
+    let compactedVideos = 0;
+    let originalVideos = 0;
     try {
       for (const { file, kind } of selectedFiles) {
         const id = `custom-bgm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1332,17 +1551,17 @@ function App() {
         let mimeType = file.type;
         const trackExtras = {};
         if (kind === "video") {
-          setBgmLibraryMessage(`${file.name} から音声だけ取り出しています...`);
-          try {
-            blob = await tryConvertVideoToAudioBlob(file);
-            trackKind = "audio";
-            mimeType = blob.type || "audio/wav";
-            convertedVideos += 1;
-            trackExtras.sourceKind = "video";
-            trackExtras.originalFileName = file.name;
-          } catch {
-            keptVideos += 1;
-          }
+          setBgmLibraryMessage(`${file.name} をBGM用に軽くしています...`);
+          const prepared = await prepareVideoBgmBlob(file);
+          blob = prepared.blob;
+          trackKind = prepared.kind;
+          mimeType = prepared.mimeType;
+          trackExtras.sourceKind = "video";
+          trackExtras.originalFileName = file.name;
+          trackExtras.videoProcess = prepared.status;
+          if (prepared.status === "audio") extractedVideos += 1;
+          if (prepared.status === "compact-video") compactedVideos += 1;
+          if (prepared.status === "original-video") originalVideos += 1;
         }
         const track = {
           id,
@@ -1365,12 +1584,12 @@ function App() {
             : playlist
         )),
       }));
-      const conversionNote = convertedVideos
-        ? `（画面録画 ${convertedVideos}件を音声化しました${keptVideos ? `、${keptVideos}件は動画のまま保存` : ""}）`
-        : keptVideos
-          ? `（画面録画 ${keptVideos}件は動画のまま保存しました）`
-          : "";
-      setBgmLibraryMessage(`${addedTracks.length}件のBGMを追加しました${conversionNote}`);
+      const conversionParts = [];
+      if (extractedVideos) conversionParts.push(`音声抽出 ${extractedVideos}件`);
+      if (compactedVideos) conversionParts.push(`軽量動画化 ${compactedVideos}件`);
+      if (originalVideos) conversionParts.push(`そのまま保存 ${originalVideos}件`);
+      const warning = originalVideos ? "。一部の動画はアップロードは難しいです。短めの画面録画にすると移植しやすくなります" : "";
+      setBgmLibraryMessage(`${addedTracks.length}件のBGMを追加しました${conversionParts.length ? `（${conversionParts.join("、")}）` : ""}${warning}`);
     } catch {
       setBgmLibraryMessage("BGMを保存できませんでした。容量やファイル形式を確認してください");
     }
@@ -1391,6 +1610,52 @@ function App() {
       })),
     }));
     setBgmLibraryMessage("追加BGMを削除しました");
+  }
+
+  async function optimizeSavedVideoBgms() {
+    const videoTracks = (state.sound?.customTracks || []).filter((track) => track.kind === "video");
+    if (!videoTracks.length) {
+      setBgmLibraryMessage("軽量化が必要な保存済み動画はありません");
+      return;
+    }
+    let extracted = 0;
+    let compacted = 0;
+    let kept = 0;
+    let failed = 0;
+    try {
+      for (const track of videoTracks) {
+        setBgmLibraryMessage(`保存済み動画「${track.name}」を軽くしています...`);
+        const blob = await getBgmBlob(track.id);
+        if (!blob) {
+          failed += 1;
+          continue;
+        }
+        const file = new File([blob], track.originalFileName || `${track.name}.mp4`, { type: blob.type || track.mimeType || "video/mp4" });
+        const prepared = await prepareVideoBgmBlob(file);
+        await putBgmBlob(track.id, prepared.blob);
+        if (prepared.status === "audio") extracted += 1;
+        if (prepared.status === "compact-video") compacted += 1;
+        if (prepared.status === "original-video") kept += 1;
+        updateBgmSound((sound) => ({
+          ...sound,
+          customTracks: (sound.customTracks || []).map((item) => (
+            item.id === track.id
+              ? {
+                ...item,
+                kind: prepared.kind,
+                mimeType: prepared.mimeType,
+                sourceKind: "video",
+                videoProcess: prepared.status,
+              }
+              : item
+          )),
+        }));
+      }
+      const warning = kept ? "。一部の動画はアップロードは難しいです。短めの画面録画にすると移植しやすくなります" : "";
+      setBgmLibraryMessage(`保存済み動画を処理しました（音声抽出 ${extracted}件、軽量動画化 ${compacted}件、そのまま ${kept}件${failed ? `、失敗 ${failed}件` : ""}）${warning}`);
+    } catch {
+      setBgmLibraryMessage("保存済み動画の軽量化中に問題が起きました。もう一度お試しください");
+    }
   }
 
   async function exportBgmLibrary() {
@@ -1508,6 +1773,7 @@ function App() {
               mimeType: typeof track.mimeType === "string" ? track.mimeType : blob.type,
               createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
               ...(track.sourceKind === "video" ? { sourceKind: "video" } : {}),
+              ...(["audio", "compact-video", "original-video"].includes(track.videoProcess) ? { videoProcess: track.videoProcess } : {}),
               ...(typeof track.originalFileName === "string" ? { originalFileName: track.originalFileName.slice(0, 120) } : {}),
             });
           } catch {
@@ -2135,6 +2401,9 @@ function App() {
               removeTrack={removeTrackFromBgmPlaylist}
               moveTrack={moveBgmPlaylistTrack}
               deleteCustomTrack={deleteCustomBgmTrack}
+              renameCustomTrack={renameCustomBgmTrack}
+              previewTrack={toggleBgmLibraryPreview}
+              optimizeSavedVideos={optimizeSavedVideoBgms}
               exportLibrary={exportBgmLibrary}
               preparedExportFile={pendingBgmExportFile}
               sharePreparedExport={sharePreparedBgmLibrary}
@@ -2591,6 +2860,9 @@ function BgmLibraryScreen({
   removeTrack,
   moveTrack,
   deleteCustomTrack,
+  renameCustomTrack,
+  previewTrack,
+  optimizeSavedVideos,
   exportLibrary,
   preparedExportFile,
   sharePreparedExport,
@@ -2693,6 +2965,10 @@ function BgmLibraryScreen({
           <b>このリストで流す曲</b>
           <button type="button" onClick={() => fileInputRef.current?.click()}><Upload size={15} />端末から追加</button>
         </div>
+        <button className="bgm-compact-button" type="button" onClick={optimizeSavedVideos}>
+          <FileMusic size={16} />
+          保存済み動画を軽量化
+        </button>
         <input
           ref={fileInputRef}
           className="hidden-file-input"
@@ -2711,8 +2987,9 @@ function BgmLibraryScreen({
                 <span className="track-kind"><FileMusic size={18} /></span>
                 <div>
                   <strong>{track.name}</strong>
-                  <small>{track.type === "standard" ? "標準曲" : track.kind === "video" ? "画面録画/動画" : "追加音楽"}</small>
+                  <small>{trackLabel(track)}</small>
                 </div>
+                <button type="button" aria-label="試聴" onClick={() => previewTrack(track.id)}><CirclePlay size={15} /></button>
                 <button type="button" aria-label="上へ" onClick={() => moveTrack(selectedPlaylist.id, index, -1)} disabled={index === 0}><ArrowUp size={15} /></button>
                 <button type="button" aria-label="下へ" onClick={() => moveTrack(selectedPlaylist.id, index, 1)} disabled={index === selectedTrackIds.length - 1}><ArrowDown size={15} /></button>
                 <button type="button" aria-label="リストから外す" onClick={() => removeTrack(selectedPlaylist.id, index)}><Trash2 size={15} /></button>
@@ -2729,14 +3006,32 @@ function BgmLibraryScreen({
           <b>曲一覧</b>
           <span className="small-note">標準曲と追加曲を選べます</span>
         </div>
-        <BgmCatalog title="標準曲" tracks={standardTracks} playlistId={selectedPlaylist?.id} addTrack={addTrack} />
-        <BgmCatalog title="追加した曲・画面録画" tracks={customTracks} playlistId={selectedPlaylist?.id} addTrack={addTrack} deleteCustomTrack={deleteCustomTrack} />
+        <BgmCatalog title="標準曲" tracks={standardTracks} playlistId={selectedPlaylist?.id} addTrack={addTrack} previewTrack={previewTrack} />
+        <BgmCatalog
+          title="追加した曲・画面録画"
+          tracks={customTracks}
+          playlistId={selectedPlaylist?.id}
+          addTrack={addTrack}
+          deleteCustomTrack={deleteCustomTrack}
+          renameCustomTrack={renameCustomTrack}
+          previewTrack={previewTrack}
+        />
       </section>
     </div>
   );
 }
 
-function BgmCatalog({ title, tracks, playlistId, addTrack, deleteCustomTrack }) {
+function trackLabel(track) {
+  if (track.type === "standard") return "標準曲";
+  if (track.videoProcess === "audio" || track.sourceKind === "video") {
+    if (track.kind === "audio") return "画面録画から音声化";
+    if (track.videoProcess === "compact-video") return "画面録画を軽量化";
+    if (track.videoProcess === "original-video") return "画面録画/動画（アップロードは難しいです）";
+  }
+  return track.kind === "video" ? "画面録画/動画" : "追加音楽";
+}
+
+function BgmCatalog({ title, tracks, playlistId, addTrack, deleteCustomTrack, renameCustomTrack, previewTrack }) {
   return (
     <div className="bgm-catalog">
       <h3>{title}</h3>
@@ -2744,9 +3039,21 @@ function BgmCatalog({ title, tracks, playlistId, addTrack, deleteCustomTrack }) 
         <article className="bgm-catalog-row" key={track.id}>
           <span className="track-kind"><FileMusic size={18} /></span>
           <div>
-            <strong>{track.name}</strong>
-            <small>{track.type === "standard" ? "標準曲" : track.sourceKind === "video" ? "画面録画から音声化" : track.kind === "video" ? "画面録画/動画" : "追加音楽"}</small>
+            {track.type === "custom" && renameCustomTrack ? (
+              <input
+                className="track-name-input"
+                type="text"
+                value={track.name}
+                maxLength={80}
+                aria-label={`${track.name}の曲名`}
+                onChange={(event) => renameCustomTrack(track.id, event.target.value)}
+              />
+            ) : (
+              <strong>{track.name}</strong>
+            )}
+            <small>{trackLabel(track)}</small>
           </div>
+          <button type="button" aria-label="試聴" onClick={() => previewTrack(track.id)}><CirclePlay size={15} /></button>
           <button type="button" onClick={() => addTrack(playlistId, track.id)}>追加</button>
           {track.type === "custom" && (
             <button type="button" className="danger-icon" aria-label="端末保存から削除" onClick={() => deleteCustomTrack(track.id)}>

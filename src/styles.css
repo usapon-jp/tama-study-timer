@@ -1196,7 +1196,7 @@ button:disabled {
 .bgm-track-row,
 .bgm-catalog-row {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto auto auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto auto auto;
   align-items: center;
   gap: 7px;
   min-height: 56px;
@@ -1207,7 +1207,7 @@ button:disabled {
 }
 
 .bgm-catalog-row {
-  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto auto;
 }
 
 .track-kind {
@@ -1242,6 +1242,19 @@ button:disabled {
   font-weight: 950;
 }
 
+.track-name-input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid rgba(208, 179, 132, 0.58);
+  border-radius: 12px;
+  background: rgba(255, 253, 247, 0.9);
+  color: #4f3d2c;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 950;
+  padding: 6px 9px;
+}
+
 .bgm-track-row small,
 .bgm-catalog-row small {
   color: var(--muted);
@@ -1267,6 +1280,32 @@ button:disabled {
 .bgm-track-row button:last-child {
   background: #fff0e6;
   color: #a25d3d;
+}
+
+.bgm-compact-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 42px;
+  padding: 9px 12px;
+  border-radius: 16px;
+  background: rgba(239, 244, 223, 0.86);
+  color: #5e7544;
+  font-size: 0.78rem;
+  font-weight: 950;
+}
+
+@media (max-width: 430px) {
+  .bgm-track-row,
+  .bgm-catalog-row {
+    grid-template-columns: 32px minmax(0, 1fr) auto auto;
+  }
+
+  .bgm-track-row button:nth-of-type(2),
+  .bgm-track-row button:nth-of-type(3) {
+    display: none;
+  }
 }
 
 .empty.compact {
