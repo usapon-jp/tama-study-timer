@@ -1,4 +1,4 @@
-const CACHE_NAME = "tama-study-timer-v22";
+const CACHE_NAME = "tama-study-timer-v23";
 const BASE_PATH = "/tama-study-timer/";
 const APP_SHELL = [
   BASE_PATH,
@@ -32,16 +32,22 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request).catch(() => caches.match(BASE_PATH))
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(BASE_PATH, copy));
+          return response;
+        })
+        .catch(() => caches.match(BASE_PATH))
     );
     return;
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+    fetch(request).then((response) => {
       const copy = response.clone();
       caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
       return response;
-    }))
+    }).catch(() => caches.match(request))
   );
 });

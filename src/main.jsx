@@ -701,6 +701,27 @@ async function getBgmBlob(trackId) {
   });
 }
 
+async function listBgmBlobIds() {
+  const db = await openBgmDb();
+  return new Promise((resolve) => {
+    const transaction = db.transaction(BGM_STORE_NAME, "readonly");
+    const store = transaction.objectStore(BGM_STORE_NAME);
+    if (!store.getAllKeys) {
+      db.close();
+      resolve([]);
+      return;
+    }
+    const request = store.getAllKeys();
+    request.onsuccess = () => resolve((request.result || []).map(String));
+    request.onerror = () => resolve([]);
+    transaction.oncomplete = () => db.close();
+    transaction.onerror = () => {
+      db.close();
+      resolve([]);
+    };
+  });
+}
+
 async function deleteBgmBlob(trackId) {
   const db = await openBgmDb();
   return new Promise((resolve, reject) => {
@@ -811,6 +832,33 @@ function downloadFile(file) {
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   return "downloaded";
+}
+
+function customTrackIdsFromSound(sound) {
+  const ids = new Set();
+  (sound?.customTracks || []).forEach((track) => {
+    if (track?.id && !STANDARD_BGM_TRACK_IDS.includes(track.id)) ids.add(track.id);
+  });
+  (sound?.playlists || []).forEach((playlist) => {
+    (playlist?.trackIds || []).forEach((trackId) => {
+      if (trackId && !STANDARD_BGM_TRACK_IDS.includes(trackId)) ids.add(trackId);
+    });
+  });
+  return [...ids];
+}
+
+function fallbackCustomTrack(trackId, blob) {
+  const kind = blob?.type?.startsWith("video/") ? "video" : "audio";
+  const extension = kind === "video" ? "mp4" : "mp3";
+  return {
+    id: trackId,
+    name: `追加BGM-${trackId.slice(-6)}`,
+    kind,
+    type: "custom",
+    mimeType: blob?.type || (kind === "video" ? "video/mp4" : "audio/mpeg"),
+    createdAt: new Date().toISOString(),
+    fileName: `${trackId}.${extension}`,
+  };
 }
 
 async function saveJsonFile(filename, payload) {
@@ -1266,9 +1314,18 @@ function App() {
       setPendingBgmExportFile(null);
       setBgmLibraryMessage("プレイリストを書き出す準備をしています...");
       const customTracks = [];
-      for (const track of state.sound?.customTracks || []) {
-        const blob = await getBgmBlob(track.id);
-        if (!blob) continue;
+      let skippedTracks = 0;
+      const knownTracks = new Map((state.sound?.customTracks || []).map((track) => [track.id, track]));
+      const indexedDbTrackIds = await listBgmBlobIds().catch(() => []);
+      const exportTrackIds = [...new Set([...customTrackIdsFromSound(state.sound), ...indexedDbTrackIds])]
+        .filter((trackId) => !STANDARD_BGM_TRACK_IDS.includes(trackId));
+      for (const trackId of exportTrackIds) {
+        const blob = await getBgmBlob(trackId);
+        if (!blob) {
+          skippedTracks += 1;
+          continue;
+        }
+        const track = knownTracks.get(trackId) || fallbackCustomTrack(trackId, blob);
         customTracks.push({
           ...track,
           dataUrl: await blobToDataUrl(blob),
@@ -1289,7 +1346,7 @@ function App() {
         if (navigator.userActivation?.isActive !== false) {
           await shareFile(file);
           setPendingBgmExportFile(null);
-          setBgmLibraryMessage(`プレイリストを書き出しました（追加BGM ${customTracks.length}件）`);
+          setBgmLibraryMessage(`プレイリストを書き出しました（追加BGM ${customTracks.length}件${skippedTracks ? `、${skippedTracks}件スキップ` : ""}）`);
           return;
         }
       } catch (shareError) {
@@ -1298,7 +1355,7 @@ function App() {
           return;
         }
       }
-      setBgmLibraryMessage(`プレイリストの準備ができました（追加BGM ${customTracks.length}件）。保存場所を選んでください。`);
+      setBgmLibraryMessage(`プレイリストの準備ができました（追加BGM ${customTracks.length}件${skippedTracks ? `、${skippedTracks}件スキップ` : ""}）。保存場所を選んでください。`);
     } catch (error) {
       if (error?.name === "AbortError") return;
       setBgmLibraryMessage("プレイリストを書き出せませんでした。容量や端末の空き容量を確認してください");
