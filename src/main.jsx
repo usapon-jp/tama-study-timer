@@ -42,6 +42,8 @@ const REWARD_TOAST_MS = 1500;
 const BGM_DB_NAME = "tama-study-timer-bgm";
 const BGM_DB_VERSION = 1;
 const BGM_STORE_NAME = "tracks";
+const BGM_EXPORT_MAX_BLOB_BYTES = 18 * 1024 * 1024;
+const VIDEO_AUDIO_TARGET_SAMPLE_RATE = 22050;
 const STANDARD_BGM_TRACKS = [
   { id: "standard-bgm-1", name: "標準BGM 1", kind: "audio", type: "standard", src: "audio/study-bgm-1.mp3", mimeType: "audio/mpeg" },
   { id: "standard-bgm-2", name: "標準BGM 2", kind: "audio", type: "standard", src: "audio/study-bgm-2.mp3", mimeType: "audio/mpeg" },
@@ -647,6 +649,63 @@ function inferBgmKind(file) {
   if (type.startsWith("video/") || /\.(mov|mp4|m4v|webm)$/i.test(name)) return "video";
   if (type.startsWith("audio/") || /\.(mp3|m4a|aac|wav|ogg|oga|flac)$/i.test(name)) return "audio";
   return "";
+}
+
+function encodeMonoWavFromAudioBuffer(audioBuffer, targetSampleRate = VIDEO_AUDIO_TARGET_SAMPLE_RATE) {
+  const duration = audioBuffer.duration || 0;
+  const sourceSampleRate = audioBuffer.sampleRate || targetSampleRate;
+  const sampleCount = Math.max(1, Math.floor(duration * targetSampleRate));
+  const pcmBytes = sampleCount * 2;
+  const buffer = new ArrayBuffer(44 + pcmBytes);
+  const view = new DataView(buffer);
+  const channels = [];
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
+    channels.push(audioBuffer.getChannelData(channel));
+  }
+
+  function writeString(offset, value) {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  }
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + pcmBytes, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, "data");
+  view.setUint32(40, pcmBytes, true);
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sourceIndex = Math.min(channels[0].length - 1, Math.floor((index * sourceSampleRate) / targetSampleRate));
+    let sample = 0;
+    for (const channelData of channels) {
+      sample += channelData[sourceIndex] || 0;
+    }
+    sample = Math.max(-1, Math.min(1, sample / Math.max(1, channels.length)));
+    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+async function tryConvertVideoToAudioBlob(file) {
+  const context = createAudioContext();
+  if (!context?.decodeAudioData) throw new Error("audio decode unavailable");
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const decoded = await context.decodeAudioData(arrayBuffer);
+    return encodeMonoWavFromAudioBuffer(decoded);
+  } finally {
+    context.close?.();
+  }
 }
 
 function openBgmDb() {
@@ -1263,18 +1322,38 @@ function App() {
       return;
     }
     const addedTracks = [];
+    let convertedVideos = 0;
+    let keptVideos = 0;
     try {
       for (const { file, kind } of selectedFiles) {
         const id = `custom-bgm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        let blob = file;
+        let trackKind = kind;
+        let mimeType = file.type;
+        const trackExtras = {};
+        if (kind === "video") {
+          setBgmLibraryMessage(`${file.name} から音声だけ取り出しています...`);
+          try {
+            blob = await tryConvertVideoToAudioBlob(file);
+            trackKind = "audio";
+            mimeType = blob.type || "audio/wav";
+            convertedVideos += 1;
+            trackExtras.sourceKind = "video";
+            trackExtras.originalFileName = file.name;
+          } catch {
+            keptVideos += 1;
+          }
+        }
         const track = {
           id,
           name: file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "追加BGM",
-          kind,
+          kind: trackKind,
           type: "custom",
-          mimeType: file.type,
+          mimeType,
           createdAt: new Date().toISOString(),
+          ...trackExtras,
         };
-        await putBgmBlob(id, file);
+        await putBgmBlob(id, blob);
         addedTracks.push(track);
       }
       updateBgmSound((sound) => ({
@@ -1286,7 +1365,12 @@ function App() {
             : playlist
         )),
       }));
-      setBgmLibraryMessage(`${addedTracks.length}件のBGMを追加しました`);
+      const conversionNote = convertedVideos
+        ? `（画面録画 ${convertedVideos}件を音声化しました${keptVideos ? `、${keptVideos}件は動画のまま保存` : ""}）`
+        : keptVideos
+          ? `（画面録画 ${keptVideos}件は動画のまま保存しました）`
+          : "";
+      setBgmLibraryMessage(`${addedTracks.length}件のBGMを追加しました${conversionNote}`);
     } catch {
       setBgmLibraryMessage("BGMを保存できませんでした。容量やファイル形式を確認してください");
     }
@@ -1315,6 +1399,7 @@ function App() {
       setBgmLibraryMessage("プレイリストを書き出す準備をしています...");
       const customTracks = [];
       let skippedTracks = 0;
+      let skippedLargeTracks = 0;
       const knownTracks = new Map((state.sound?.customTracks || []).map((track) => [track.id, track]));
       const indexedDbTrackIds = await listBgmBlobIds().catch(() => []);
       const exportTrackIds = [...new Set([...customTrackIdsFromSound(state.sound), ...indexedDbTrackIds])]
@@ -1323,6 +1408,10 @@ function App() {
         const blob = await getBgmBlob(trackId);
         if (!blob) {
           skippedTracks += 1;
+          continue;
+        }
+        if (blob.size > BGM_EXPORT_MAX_BLOB_BYTES) {
+          skippedLargeTracks += 1;
           continue;
         }
         const track = knownTracks.get(trackId) || fallbackCustomTrack(trackId, blob);
@@ -1342,11 +1431,12 @@ function App() {
       };
       const file = makeJsonFile(bgmLibraryFileName(), payload);
       setPendingBgmExportFile(file);
+      const skippedNote = `${skippedTracks ? `、${skippedTracks}件スキップ` : ""}${skippedLargeTracks ? `、大きいBGM ${skippedLargeTracks}件は除外` : ""}`;
       try {
         if (navigator.userActivation?.isActive !== false) {
           await shareFile(file);
           setPendingBgmExportFile(null);
-          setBgmLibraryMessage(`プレイリストを書き出しました（追加BGM ${customTracks.length}件${skippedTracks ? `、${skippedTracks}件スキップ` : ""}）`);
+          setBgmLibraryMessage(`プレイリストを書き出しました（追加BGM ${customTracks.length}件${skippedNote}）`);
           return;
         }
       } catch (shareError) {
@@ -1355,7 +1445,11 @@ function App() {
           return;
         }
       }
-      setBgmLibraryMessage(`プレイリストの準備ができました（追加BGM ${customTracks.length}件${skippedTracks ? `、${skippedTracks}件スキップ` : ""}）。保存場所を選んでください。`);
+      if (skippedLargeTracks) {
+        setBgmLibraryMessage(`プレイリストの準備ができました（追加BGM ${customTracks.length}件、大きいBGM ${skippedLargeTracks}件は除外）。画面録画は追加し直すと音声化できる場合があります。`);
+      } else {
+        setBgmLibraryMessage(`プレイリストの準備ができました（追加BGM ${customTracks.length}件${skippedNote}）。保存場所を選んでください。`);
+      }
     } catch (error) {
       if (error?.name === "AbortError") return;
       setBgmLibraryMessage("プレイリストを書き出せませんでした。容量や端末の空き容量を確認してください");
@@ -1413,6 +1507,8 @@ function App() {
               type: "custom",
               mimeType: typeof track.mimeType === "string" ? track.mimeType : blob.type,
               createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
+              ...(track.sourceKind === "video" ? { sourceKind: "video" } : {}),
+              ...(typeof track.originalFileName === "string" ? { originalFileName: track.originalFileName.slice(0, 120) } : {}),
             });
           } catch {
             failedTracks += 1;
@@ -2649,7 +2745,7 @@ function BgmCatalog({ title, tracks, playlistId, addTrack, deleteCustomTrack }) 
           <span className="track-kind"><FileMusic size={18} /></span>
           <div>
             <strong>{track.name}</strong>
-            <small>{track.type === "standard" ? "標準曲" : track.kind === "video" ? "画面録画/動画" : "追加音楽"}</small>
+            <small>{track.type === "standard" ? "標準曲" : track.sourceKind === "video" ? "画面録画から音声化" : track.kind === "video" ? "画面録画/動画" : "追加音楽"}</small>
           </div>
           <button type="button" onClick={() => addTrack(playlistId, track.id)}>追加</button>
           {track.type === "custom" && (
