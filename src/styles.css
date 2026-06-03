@@ -2195,6 +2195,9 @@ button:disabled {
 }
 
 .outfit-message {
+  position: sticky;
+  top: 0;
+  z-index: 6;
   margin: -2px 0 2px;
   padding: 9px 12px;
   border-radius: 16px;
@@ -2203,6 +2206,11 @@ button:disabled {
   font-size: 0.78rem;
   font-weight: 950;
   text-align: center;
+}
+
+.wardrobe-screen.modal-open {
+  z-index: 20;
+  overflow: hidden;
 }
 
 .outfit-card {
@@ -2295,10 +2303,10 @@ button:disabled {
 .purchase-overlay {
   position: absolute;
   inset: 0;
-  z-index: 30;
+  z-index: 40;
   display: grid;
-  place-items: end center;
-  padding: 18px;
+  place-items: center;
+  padding: 24px 18px 124px;
 }
 
 .purchase-scrim {
@@ -2315,11 +2323,12 @@ button:disabled {
   grid-template-columns: 86px minmax(0, 1fr);
   gap: 12px;
   width: 100%;
+  max-width: 340px;
   padding: 14px;
   border: 1px solid rgba(218, 190, 147, 0.72);
   border-radius: 24px;
   background: rgba(255, 250, 239, 0.98);
-  box-shadow: 0 -14px 36px rgba(82, 58, 31, 0.2);
+  box-shadow: 0 18px 42px rgba(82, 58, 31, 0.24);
 }
 
 .purchase-dialog img {

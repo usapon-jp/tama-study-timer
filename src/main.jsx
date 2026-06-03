@@ -3404,7 +3404,7 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
   }
 
   return (
-    <div className="screen wardrobe-screen">
+    <div className={`screen wardrobe-screen ${purchaseOutfit || previewOutfit ? "modal-open" : ""}`}>
       <TopBar title="ショップ" points={state.points} onBack={() => setTab("home")} />
       <div className="shop-tabs">
         <button className="active" type="button">おようふく</button>
