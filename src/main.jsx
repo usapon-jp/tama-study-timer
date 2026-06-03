@@ -785,25 +785,42 @@ function extractBgmLibraryPayload(parsed) {
   return null;
 }
 
-async function saveJsonFile(filename, payload) {
+function makeJsonFile(filename, payload) {
   const blob = new Blob([typeof payload === "string" ? payload : JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const file = new File([blob], filename, { type: "application/json" });
+  return new File([blob], filename, { type: "application/json" });
+}
+
+async function shareFile(file) {
   if (navigator.canShare?.({ files: [file] }) && navigator.share) {
     await navigator.share({
       files: [file],
-      title: filename,
+      title: file.name,
     });
     return "shared";
   }
-  const url = URL.createObjectURL(blob);
+  throw new Error("share unavailable");
+}
+
+function downloadFile(file) {
+  const url = URL.createObjectURL(file);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = filename;
+  anchor.download = file.name;
   document.body.appendChild(anchor);
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   return "downloaded";
+}
+
+async function saveJsonFile(filename, payload) {
+  const file = makeJsonFile(filename, payload);
+  try {
+    return await shareFile(file);
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
+    return downloadFile(file);
+  }
 }
 
 function App() {
@@ -816,6 +833,7 @@ function App() {
   const [pendingCompletion, setPendingCompletion] = useState(null);
   const [rewardToast, setRewardToast] = useState(null);
   const [bgmLibraryMessage, setBgmLibraryMessage] = useState("");
+  const [pendingBgmExportFile, setPendingBgmExportFile] = useState(null);
   const [recordSyncMessage, setRecordSyncMessage] = useState("");
   const stateRef = useRef(state);
   const audioContextRef = useRef(null);
@@ -1245,6 +1263,8 @@ function App() {
 
   async function exportBgmLibrary() {
     try {
+      setPendingBgmExportFile(null);
+      setBgmLibraryMessage("プレイリストを書き出す準備をしています...");
       const customTracks = [];
       for (const track of state.sound?.customTracks || []) {
         const blob = await getBgmBlob(track.id);
@@ -1263,11 +1283,47 @@ function App() {
         playlists: state.sound?.playlists || [],
         customTracks,
       };
-      await saveJsonFile(bgmLibraryFileName(), payload);
-      setBgmLibraryMessage(`プレイリストを書き出しました（追加BGM ${customTracks.length}件）`);
+      const file = makeJsonFile(bgmLibraryFileName(), payload);
+      setPendingBgmExportFile(file);
+      try {
+        if (navigator.userActivation?.isActive !== false) {
+          await shareFile(file);
+          setPendingBgmExportFile(null);
+          setBgmLibraryMessage(`プレイリストを書き出しました（追加BGM ${customTracks.length}件）`);
+          return;
+        }
+      } catch (shareError) {
+        if (shareError?.name === "AbortError") {
+          setBgmLibraryMessage("保存をキャンセルしました。必要なら「保存場所を選ぶ」を押してください。");
+          return;
+        }
+      }
+      setBgmLibraryMessage(`プレイリストの準備ができました（追加BGM ${customTracks.length}件）。保存場所を選んでください。`);
     } catch (error) {
       if (error?.name === "AbortError") return;
       setBgmLibraryMessage("プレイリストを書き出せませんでした。容量や端末の空き容量を確認してください");
+    }
+  }
+
+  async function sharePreparedBgmLibrary() {
+    if (!pendingBgmExportFile) return;
+    try {
+      const result = await shareFile(pendingBgmExportFile).catch((error) => {
+        if (error?.name === "AbortError") throw error;
+        return downloadFile(pendingBgmExportFile);
+      });
+      if (result === "shared") {
+        setPendingBgmExportFile(null);
+        setBgmLibraryMessage("プレイリストを書き出しました。");
+      } else {
+        setBgmLibraryMessage("プレイリストをダウンロードしました。");
+      }
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        setBgmLibraryMessage("保存をキャンセルしました。必要ならもう一度「保存場所を選ぶ」を押してください。");
+        return;
+      }
+      setBgmLibraryMessage("保存場所を開けませんでした。端末の共有設定を確認してください。");
     }
   }
 
@@ -1927,6 +1983,8 @@ function App() {
               moveTrack={moveBgmPlaylistTrack}
               deleteCustomTrack={deleteCustomBgmTrack}
               exportLibrary={exportBgmLibrary}
+              preparedExportFile={pendingBgmExportFile}
+              sharePreparedExport={sharePreparedBgmLibrary}
               importLibrary={importBgmLibraryFile}
             />
           )}
@@ -2215,12 +2273,12 @@ function DataManagementSheet({ accountName, onExport, onImport, onClose }) {
         </div>
         <div className="backup-actions">
           <button className="backup-action primary" type="button" onClick={onExport}>
-            <Download size={18} />
+            <Upload size={18} />
             <span>バックアップを保存</span>
             <small>「{accountName}」の記録・設定・ごほうび・ptを書き出します</small>
           </button>
           <label className="backup-action" htmlFor={inputId}>
-            <Upload size={18} />
+            <Download size={18} />
             <span>バックアップから復元</span>
             <small>選んだJSONで「{accountName}」だけを上書きします</small>
           </label>
@@ -2261,11 +2319,11 @@ function SettingsScreen({ state, setTab, openDataManager, recordSyncMessage, upd
         </label>
         <div className="record-sync-actions">
           <button className="record-sync-button primary" type="button" onClick={exportTodayRecords}>
-            <Download size={18} />
+            <Upload size={18} />
             <span>今日の記録を書き出す</span>
           </button>
           <button className="record-sync-button" type="button" onClick={() => importInputRef.current?.click()}>
-            <Upload size={18} />
+            <Download size={18} />
             <span>記録を読み込んで集約</span>
           </button>
           <input
@@ -2381,6 +2439,8 @@ function BgmLibraryScreen({
   moveTrack,
   deleteCustomTrack,
   exportLibrary,
+  preparedExportFile,
+  sharePreparedExport,
   importLibrary,
 }) {
   const fileInputRef = useRef(null);
@@ -2411,11 +2471,17 @@ function BgmLibraryScreen({
         </div>
         <div className="bgm-transfer-actions">
           <button className="bgm-transfer-button primary" type="button" onClick={exportLibrary}>
-            <Download size={18} />
+            <Upload size={18} />
             <span>プレイリストを書き出す</span>
           </button>
+          {preparedExportFile && (
+            <button className="bgm-transfer-button primary" type="button" onClick={sharePreparedExport}>
+              <Upload size={18} />
+              <span>保存場所を選ぶ</span>
+            </button>
+          )}
           <button className="bgm-transfer-button" type="button" onClick={() => importLibraryInputRef.current?.click()}>
-            <Upload size={18} />
+            <Download size={18} />
             <span>プレイリストを読み込む</span>
           </button>
           <input
@@ -3259,20 +3325,24 @@ function RecordsScreen({ state, subjects, setTab, updateChartSettings, updateSes
 function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
   const [purchaseOutfit, setPurchaseOutfit] = useState(null);
   const [previewOutfit, setPreviewOutfit] = useState(null);
+  const [outfitMessage, setOutfitMessage] = useState("");
   const purchaseUnlocked = purchaseOutfit ? state.unlockedOutfits.includes(purchaseOutfit.id) : false;
   const purchaseCanBuy = purchaseOutfit ? state.points >= purchaseOutfit.cost : false;
 
   function handleOutfitTap(outfit) {
     if (state.unlockedOutfits.includes(outfit.id)) {
       unlockOrSelect(outfit);
+      setOutfitMessage("もう交換済みです");
       return;
     }
+    setOutfitMessage("");
     setPurchaseOutfit(outfit);
   }
 
   function confirmPurchase() {
     if (!purchaseOutfit || !purchaseCanBuy || purchaseUnlocked) return;
     unlockOrSelect(purchaseOutfit);
+    setOutfitMessage("もう交換済みです");
     setPurchaseOutfit(null);
   }
 
@@ -3283,6 +3353,7 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
         <button className="active" type="button">おようふく</button>
         <button type="button">家具</button>
       </div>
+      {outfitMessage && <p className="outfit-message" role="status">{outfitMessage}</p>}
       <div className="outfit-grid">
         {outfits.map((outfit) => {
           const unlocked = state.unlockedOutfits.includes(outfit.id);
@@ -3325,9 +3396,9 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
               {!purchaseCanBuy && <small>ポイントが足りません</small>}
             </div>
             <div className="purchase-actions">
-              <button type="button" onClick={() => setPurchaseOutfit(null)}>キャンセル</button>
+              <button type="button" onClick={() => setPurchaseOutfit(null)}>いいえ</button>
               <button className="primary" type="button" onClick={confirmPurchase} disabled={!purchaseCanBuy}>
-                購入する
+                はい
               </button>
             </div>
           </section>
@@ -3351,7 +3422,13 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
 
 function ClosetScreen({ state, outfits, unlockOrSelect, setTab }) {
   const [previewOutfit, setPreviewOutfit] = useState(null);
+  const [outfitMessage, setOutfitMessage] = useState("");
   const unlockedOutfits = outfits.filter((outfit) => state.unlockedOutfits.includes(outfit.id));
+
+  function wearOutfit(outfit) {
+    unlockOrSelect(outfit);
+    setOutfitMessage("もう交換済みです");
+  }
 
   return (
     <div className="screen wardrobe-screen closet-screen">
@@ -3363,6 +3440,7 @@ function ClosetScreen({ state, outfits, unlockOrSelect, setTab }) {
           ショップ
         </button>
       </div>
+      {outfitMessage && <p className="outfit-message" role="status">{outfitMessage}</p>}
       <div className="outfit-grid">
         {unlockedOutfits.map((outfit) => {
           const selected = state.selectedOutfitId === outfit.id;
@@ -3381,7 +3459,7 @@ function ClosetScreen({ state, outfits, unlockOrSelect, setTab }) {
               <button
                 className="outfit-action"
                 type="button"
-                onClick={() => unlockOrSelect(outfit)}
+                onClick={() => wearOutfit(outfit)}
                 disabled={selected}
               >
                 {selected ? "着用中" : "着る"}

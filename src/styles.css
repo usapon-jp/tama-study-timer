@@ -2194,6 +2194,17 @@ button:disabled {
   color: #765f48;
 }
 
+.outfit-message {
+  margin: -2px 0 2px;
+  padding: 9px 12px;
+  border-radius: 16px;
+  background: rgba(239, 244, 223, 0.88);
+  color: #5e7544;
+  font-size: 0.78rem;
+  font-weight: 950;
+  text-align: center;
+}
+
 .outfit-card {
   position: relative;
   display: grid;
