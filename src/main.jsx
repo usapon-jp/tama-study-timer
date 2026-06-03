@@ -126,6 +126,10 @@ function dailyRecordsFileName() {
   return `tama-study-timer-records-${todayKey()}.json`;
 }
 
+function bgmLibraryFileName() {
+  return `tama-study-timer-bgm-library-${todayKey()}.json`;
+}
+
 function isHexColor(value) {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
 }
@@ -594,6 +598,23 @@ function deleteBgmDb() {
   });
 }
 
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("ファイルを読み込めませんでした"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function dataUrlToBlob(dataUrl) {
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) {
+    throw new Error("invalid data url");
+  }
+  const response = await fetch(dataUrl);
+  return response.blob();
+}
+
 function App() {
   const [state, setState] = useState(loadState);
   const [tab, setTab] = useState("home");
@@ -1027,6 +1048,102 @@ function App() {
       })),
     }));
     setBgmLibraryMessage("追加BGMを削除しました");
+  }
+
+  async function exportBgmLibrary() {
+    try {
+      const customTracks = [];
+      for (const track of state.sound?.customTracks || []) {
+        const blob = await getBgmBlob(track.id);
+        if (!blob) continue;
+        customTracks.push({
+          ...track,
+          dataUrl: await blobToDataUrl(blob),
+        });
+      }
+      const payload = {
+        app: "tama-study-timer-bgm-library",
+        appVersion: APP_VERSION,
+        exportedAt: new Date().toISOString(),
+        deviceName: state.deviceName?.trim() || "この端末",
+        selectedPlaylistId: state.sound?.selectedPlaylistId || DEFAULT_BGM_PLAYLIST_ID,
+        playlists: state.sound?.playlists || [],
+        customTracks,
+      };
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = bgmLibraryFileName();
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setBgmLibraryMessage(`BGM音楽集を書き出しました（追加BGM ${customTracks.length}件）`);
+    } catch {
+      setBgmLibraryMessage("BGM音楽集を書き出せませんでした。容量や端末の空き容量を確認してください");
+    }
+  }
+
+  function importBgmLibraryFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || ""));
+        if (parsed?.app !== "tama-study-timer-bgm-library" || !Array.isArray(parsed.playlists)) {
+          throw new Error("invalid bgm library payload");
+        }
+        const ok = window.confirm("BGM音楽集をこの端末に読み込みます。既存の勉強記録は消えません。");
+        if (!ok) return;
+        const importedTracks = [];
+        for (const track of parsed.customTracks || []) {
+          if (!track?.id || !track?.dataUrl) continue;
+          const blob = await dataUrlToBlob(track.dataUrl);
+          await putBgmBlob(track.id, blob);
+          importedTracks.push({
+            id: String(track.id),
+            name: typeof track.name === "string" && track.name.trim() ? track.name.trim().slice(0, 80) : "追加BGM",
+            kind: track.kind === "video" ? "video" : "audio",
+            type: "custom",
+            mimeType: typeof track.mimeType === "string" ? track.mimeType : blob.type,
+            createdAt: typeof track.createdAt === "string" ? track.createdAt : new Date().toISOString(),
+          });
+        }
+        const importedTrackIds = new Set(importedTracks.map((track) => track.id));
+        const importedPlaylists = (parsed.playlists || [])
+          .filter((playlist) => playlist?.id && Array.isArray(playlist.trackIds))
+          .map((playlist, index) => ({
+            id: String(playlist.id),
+            name: typeof playlist.name === "string" && playlist.name.trim() ? playlist.name.trim().slice(0, 30) : `移植プレイリスト${index + 1}`,
+            trackIds: playlist.trackIds.filter((trackId) => (
+              STANDARD_BGM_TRACK_IDS.includes(trackId) || importedTrackIds.has(trackId) || (state.sound?.customTracks || []).some((track) => track.id === trackId)
+            )),
+          }));
+        const importedPlaylistIds = new Set(importedPlaylists.map((playlist) => playlist.id));
+        updateBgmSound((sound) => ({
+          ...sound,
+          customTracks: [
+            ...(sound.customTracks || []).filter((track) => !importedTrackIds.has(track.id)),
+            ...importedTracks,
+          ],
+          playlists: [
+            ...(sound.playlists || []).filter((playlist) => !importedPlaylistIds.has(playlist.id)),
+            ...importedPlaylists,
+          ],
+          selectedPlaylistId: importedPlaylistIds.has(parsed.selectedPlaylistId)
+            ? parsed.selectedPlaylistId
+            : sound.selectedPlaylistId,
+        }));
+        setBgmLibraryMessage(`BGM音楽集を読み込みました（プレイリスト ${importedPlaylists.length}件、追加BGM ${importedTracks.length}件）`);
+      } catch {
+        setBgmLibraryMessage("BGM音楽集を読み込めませんでした。移植用JSONファイルか確認してください。");
+      }
+    };
+    reader.onerror = () => {
+      setBgmLibraryMessage("BGM音楽集を読み込めませんでした。");
+    };
+    reader.readAsText(file);
   }
 
   function toggleSoundPanel() {
@@ -1514,6 +1631,8 @@ function App() {
               removeTrack={removeTrackFromBgmPlaylist}
               moveTrack={moveBgmPlaylistTrack}
               deleteCustomTrack={deleteCustomBgmTrack}
+              exportLibrary={exportBgmLibrary}
+              importLibrary={importBgmLibraryFile}
             />
           )}
           {tab === "subjects" && (
@@ -1893,8 +2012,11 @@ function BgmLibraryScreen({
   removeTrack,
   moveTrack,
   deleteCustomTrack,
+  exportLibrary,
+  importLibrary,
 }) {
   const fileInputRef = useRef(null);
+  const importLibraryInputRef = useRef(null);
   const sound = state.sound || {};
   const playlists = sound.playlists || [];
   const selectedPlaylist = playlists.find((playlist) => playlist.id === sound.selectedPlaylistId) || playlists[0];
@@ -1914,6 +2036,34 @@ function BgmLibraryScreen({
   return (
     <div className="screen bgm-library-screen">
       <TopBar title="BGM音楽集" points={state.points} onBack={() => setTab("settings")} rightIcon="none" />
+      <section className="bgm-panel">
+        <div className="section-head">
+          <b>iCloudで移植</b>
+          <span className="small-note">音源もまとめて移せます</span>
+        </div>
+        <div className="bgm-transfer-actions">
+          <button className="bgm-transfer-button primary" type="button" onClick={exportLibrary}>
+            <Download size={18} />
+            <span>音楽集を書き出す</span>
+          </button>
+          <button className="bgm-transfer-button" type="button" onClick={() => importLibraryInputRef.current?.click()}>
+            <Upload size={18} />
+            <span>音楽集を読み込む</span>
+          </button>
+          <input
+            ref={importLibraryInputRef}
+            className="hidden-file-input"
+            type="file"
+            accept="application/json,.json"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              importLibrary(file);
+            }}
+          />
+        </div>
+        <p className="bgm-transfer-note">書き出したJSONをファイルアプリでiCloud Driveに保存し、別端末でこの画面から読み込めます。</p>
+      </section>
       <section className="bgm-panel">
         <div className="section-head">
           <b>プレイリスト</b>

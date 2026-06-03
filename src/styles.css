@@ -1025,6 +1025,48 @@ button:disabled {
   font-weight: 900;
 }
 
+.bgm-transfer-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 9px;
+}
+
+.bgm-transfer-button {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border: 1px solid rgba(208, 179, 132, 0.42);
+  border-radius: 18px;
+  background: rgba(255, 246, 226, 0.92);
+  color: #604931;
+  text-align: left;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.bgm-transfer-button.primary {
+  color: #fffdf7;
+  background: linear-gradient(135deg, #8fa871, #d0aa62);
+}
+
+.bgm-transfer-button svg {
+  justify-self: center;
+}
+
+.bgm-transfer-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #fff6e2;
+  color: #80674e;
+  font-size: 0.73rem;
+  font-weight: 850;
+  line-height: 1.55;
+}
+
 .bgm-track-list,
 .bgm-catalog {
   display: grid;
