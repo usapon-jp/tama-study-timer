@@ -122,6 +122,7 @@ const OUTFITS = [
   { id: "outfit-n-2", name: "やさしいカーデ", cost: 400 },
   { id: "outfit-n-3", name: "リボンワンピース", cost: 600 },
   { id: "outfit-r-1", name: "ナチュラルワンピ", cost: 450 },
+  { id: "outfit-sunflower", name: "ひまわりの服", cost: 700 },
 ];
 const DEFAULT_OUTFIT_ID = "outfit-n-1";
 const OUTFIT_IDS = new Set(OUTFITS.map((outfit) => outfit.id));
@@ -130,6 +131,7 @@ const STUDY_IMAGES = {
   "outfit-n-2": "study/full/outfit-n-2.png",
   "outfit-n-3": "study/full/outfit-n-3.png",
   "outfit-r-1": "study/full/outfit-r-1.png",
+  "outfit-sunflower": "study/full/outfit-sunflower.png",
 };
 const SUBJECT_ICON_VERSION = "20260526-free-icon";
 const ACCOUNT_DATA_KEYS = [
