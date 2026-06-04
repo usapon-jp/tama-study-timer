@@ -122,7 +122,7 @@ const OUTFITS = [
   { id: "outfit-n-2", name: "やさしいカーデ", cost: 400 },
   { id: "outfit-n-3", name: "リボンワンピース", cost: 600 },
   { id: "outfit-r-1", name: "ナチュラルワンピ", cost: 450 },
-  { id: "outfit-sunflower", name: "ひまわりの服", cost: 700 },
+  { id: "outfit-sunflower", name: "ひまわりの服", cost: 700, saleCost: 500, saleEndsAt: "2026-06-18T23:59:59+09:00" },
 ];
 const DEFAULT_OUTFIT_ID = "outfit-n-1";
 const OUTFIT_IDS = new Set(OUTFITS.map((outfit) => outfit.id));
@@ -160,6 +160,22 @@ const ACCOUNT_DATA_KEYS = [
 
 function studyImageFor(outfitId) {
   return STUDY_IMAGES[outfitId] || STUDY_IMAGES["outfit-n-1"];
+}
+
+function outfitSaleActive(outfit, at = Date.now()) {
+  if (!outfit?.saleCost || !outfit?.saleEndsAt) return false;
+  return at <= new Date(outfit.saleEndsAt).getTime();
+}
+
+function outfitPrice(outfit, at = Date.now()) {
+  return outfitSaleActive(outfit, at) ? outfit.saleCost : outfit.cost;
+}
+
+function outfitSaleLabel(outfit) {
+  if (!outfit?.saleEndsAt) return "";
+  const end = new Date(outfit.saleEndsAt);
+  if (Number.isNaN(end.getTime())) return "";
+  return `${end.getMonth() + 1}/${end.getDate()}まで`;
 }
 
 function asset(path) {
@@ -2254,11 +2270,12 @@ function App() {
   function unlockOrSelect(outfit) {
     setState((current) => {
       const isUnlocked = current.unlockedOutfits.includes(outfit.id);
+      const price = outfitPrice(outfit);
       if (isUnlocked) return { ...current, selectedOutfitId: outfit.id };
-      if (current.points < outfit.cost) return current;
+      if (current.points < price) return current;
       return {
         ...current,
-        points: current.points - outfit.cost,
+        points: current.points - price,
         unlockedOutfits: [...current.unlockedOutfits, outfit.id],
         selectedOutfitId: outfit.id,
       };
@@ -3927,7 +3944,9 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
   const [previewOutfit, setPreviewOutfit] = useState(null);
   const [outfitMessage, setOutfitMessage] = useState("");
   const purchaseUnlocked = purchaseOutfit ? state.unlockedOutfits.includes(purchaseOutfit.id) : false;
-  const purchaseCanBuy = purchaseOutfit ? state.points >= purchaseOutfit.cost : false;
+  const purchasePrice = purchaseOutfit ? outfitPrice(purchaseOutfit) : 0;
+  const purchaseOnSale = purchaseOutfit ? outfitSaleActive(purchaseOutfit) : false;
+  const purchaseCanBuy = purchaseOutfit ? state.points >= purchasePrice : false;
 
   function handleOutfitTap(outfit) {
     if (state.unlockedOutfits.includes(outfit.id)) {
@@ -3958,11 +3977,14 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
         {outfits.map((outfit) => {
           const unlocked = state.unlockedOutfits.includes(outfit.id);
           const selected = state.selectedOutfitId === outfit.id;
+          const price = outfitPrice(outfit);
+          const onSale = outfitSaleActive(outfit);
           return (
             <article
               className={`outfit-card ${selected ? "selected" : ""} ${!unlocked ? "locked" : ""}`}
               key={outfit.id}
             >
+              {onSale && !unlocked && <span className="sale-ribbon">新発売SALE</span>}
               <button
                 className="zoom"
                 type="button"
@@ -3979,8 +4001,16 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
                 onClick={() => handleOutfitTap(outfit)}
                 disabled={selected}
               >
-                {unlocked ? (selected ? "着用中" : "着る") : `${outfit.cost.toLocaleString()} pt`}
+                {unlocked ? (selected ? "着用中" : "着る") : (
+                  onSale ? (
+                    <>
+                      <span className="sale-price">{price.toLocaleString()} pt</span>
+                      <span className="original-price">{outfit.cost.toLocaleString()} pt</span>
+                    </>
+                  ) : `${price.toLocaleString()} pt`
+                )}
               </button>
+              {onSale && !unlocked && <small className="sale-note">{outfitSaleLabel(outfit)}</small>}
             </article>
           );
         })}
@@ -3992,7 +4022,8 @@ function WardrobeScreen({ state, outfits, unlockOrSelect, setTab }) {
             <img src={asset(`crops/${purchaseOutfit.id}.png`)} alt="" />
             <div>
               <span>{purchaseOutfit.name}</span>
-              <strong>{purchaseOutfit.cost.toLocaleString()}ptで購入しますか？</strong>
+              <strong>{purchasePrice.toLocaleString()}ptで購入しますか？</strong>
+              {purchaseOnSale && <small>新発売セール中: 通常 {purchaseOutfit.cost.toLocaleString()}pt / {outfitSaleLabel(purchaseOutfit)}</small>}
               {!purchaseCanBuy && <small>ポイントが足りません</small>}
             </div>
             <div className="purchase-actions">
