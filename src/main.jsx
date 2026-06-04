@@ -46,6 +46,33 @@ const BGM_EXPORT_MAX_BLOB_BYTES = 18 * 1024 * 1024;
 const VIDEO_AUDIO_TARGET_SAMPLE_RATE = 22050;
 const VIDEO_COMPACT_MAX_WIDTH = 480;
 const VIDEO_COMPACT_FPS = 18;
+const SUPPORTED_BGM_AUDIO_EXTENSIONS = ["m4a", "mp3", "aac", "wav", "ogg"];
+const SUPPORTED_BGM_AUDIO_MIME_TYPES = [
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/m4a",
+  "audio/aac",
+  "audio/aacp",
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/wave",
+  "audio/x-wav",
+  "audio/ogg",
+  "application/ogg",
+];
+const SUPPORTED_BGM_AUDIO_LABEL = ".m4a / .mp3 / .aac / .wav / .ogg";
+const BGM_FILE_ACCEPT = [
+  ...SUPPORTED_BGM_AUDIO_EXTENSIONS.map((extension) => `.${extension}`),
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/ogg",
+  "application/ogg",
+  "video/*",
+].join(",");
 const STANDARD_BGM_TRACKS = [
   { id: "standard-bgm-1", name: "標準BGM 1", kind: "audio", type: "standard", src: "audio/study-bgm-1.mp3", mimeType: "audio/mpeg" },
   { id: "standard-bgm-2", name: "標準BGM 2", kind: "audio", type: "standard", src: "audio/study-bgm-2.mp3", mimeType: "audio/mpeg" },
@@ -660,10 +687,98 @@ function createAudioContext() {
 
 function inferBgmKind(file) {
   const type = file?.type || "";
+  const extension = fileExtension(file);
+  if (isSupportedBgmAudioFile(file)) return "audio";
   const name = (file?.name || "").toLowerCase();
-  if (type.startsWith("video/") || /\.(mov|mp4|m4v|webm)$/i.test(name)) return "video";
-  if (type.startsWith("audio/") || /\.(mp3|m4a|aac|wav|ogg|oga|flac)$/i.test(name)) return "audio";
+  if (type.startsWith("video/") || ["mov", "mp4", "m4v", "webm"].includes(extension) || /\.(mov|mp4|m4v|webm)$/i.test(name)) return "video";
   return "";
+}
+
+function fileExtension(file) {
+  const name = (file?.name || "").toLowerCase();
+  const match = name.match(/\.([a-z0-9]+)$/);
+  return match ? match[1] : "";
+}
+
+function normalizedMimeType(type) {
+  return String(type || "").split(";")[0].trim().toLowerCase();
+}
+
+function mimeTypeForAudioExtension(extension) {
+  return {
+    m4a: "audio/mp4",
+    mp3: "audio/mpeg",
+    aac: "audio/aac",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+  }[extension] || "";
+}
+
+function isSupportedBgmAudioFile(file) {
+  const extension = fileExtension(file);
+  const mimeType = normalizedMimeType(file?.type);
+  return SUPPORTED_BGM_AUDIO_EXTENSIONS.includes(extension) || SUPPORTED_BGM_AUDIO_MIME_TYPES.includes(mimeType);
+}
+
+function audioMimeCandidates(file) {
+  const extension = fileExtension(file);
+  const mimeType = normalizedMimeType(file?.type);
+  return [...new Set([
+    mimeType,
+    mimeTypeForAudioExtension(extension),
+    extension === "m4a" ? "audio/x-m4a" : "",
+    extension === "mp3" ? "audio/mp3" : "",
+  ].filter(Boolean))];
+}
+
+async function verifyAudioFilePlayable(file) {
+  if (!isSupportedBgmAudioFile(file)) {
+    throw new Error("unsupported audio format");
+  }
+  const audio = document.createElement("audio");
+  const candidates = audioMimeCandidates(file);
+  const hasLikelyType = !candidates.length || candidates.some((mimeType) => {
+    const result = audio.canPlayType(mimeType);
+    return result === "probably" || result === "maybe";
+  });
+  if (!hasLikelyType) {
+    throw new Error("audio format not playable");
+  }
+  await new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    let done = false;
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      audio.removeAttribute("src");
+      audio.load();
+      URL.revokeObjectURL(url);
+    };
+    const succeed = () => {
+      cleanup();
+      resolve();
+    };
+    const fail = () => {
+      cleanup();
+      reject(new Error("audio metadata unavailable"));
+    };
+    const timeoutId = window.setTimeout(fail, 5000);
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      window.clearTimeout(timeoutId);
+      succeed();
+    };
+    audio.oncanplay = () => {
+      window.clearTimeout(timeoutId);
+      succeed();
+    };
+    audio.onerror = () => {
+      window.clearTimeout(timeoutId);
+      fail();
+    };
+    audio.src = url;
+    audio.load();
+  });
 }
 
 function encodeMonoWavFromAudioBuffer(audioBuffer, targetSampleRate = VIDEO_AUDIO_TARGET_SAMPLE_RATE) {
@@ -1532,48 +1647,65 @@ function App() {
   }
 
   async function addBgmFiles(files, playlistId) {
-    const selectedFiles = Array.from(files || [])
+    const rawFiles = Array.from(files || []);
+    const classifiedFiles = rawFiles
       .map((file) => ({ file, kind: inferBgmKind(file) }))
-      .filter((item) => item.kind);
+    const selectedFiles = classifiedFiles.filter((item) => item.kind);
+    const unsupportedFiles = classifiedFiles.length - selectedFiles.length;
     if (!selectedFiles.length) {
-      setBgmLibraryMessage("音楽または画面録画ファイルを選んでください");
+      setBgmLibraryMessage(`BGMを追加できませんでした。対応形式は ${SUPPORTED_BGM_AUDIO_LABEL} と画面録画/動画です`);
       return;
     }
     const addedTracks = [];
     let extractedVideos = 0;
     let compactedVideos = 0;
     let originalVideos = 0;
+    let failedAudioFiles = 0;
+    let failedSaveFiles = 0;
     try {
       for (const { file, kind } of selectedFiles) {
-        const id = `custom-bgm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        let blob = file;
-        let trackKind = kind;
-        let mimeType = file.type;
-        const trackExtras = {};
-        if (kind === "video") {
-          setBgmLibraryMessage(`${file.name} をBGM用に軽くしています...`);
-          const prepared = await prepareVideoBgmBlob(file);
-          blob = prepared.blob;
-          trackKind = prepared.kind;
-          mimeType = prepared.mimeType;
-          trackExtras.sourceKind = "video";
-          trackExtras.originalFileName = file.name;
-          trackExtras.videoProcess = prepared.status;
-          if (prepared.status === "audio") extractedVideos += 1;
-          if (prepared.status === "compact-video") compactedVideos += 1;
-          if (prepared.status === "original-video") originalVideos += 1;
+        try {
+          const id = `custom-bgm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          let blob = file;
+          let trackKind = kind;
+          let mimeType = file.type || mimeTypeForAudioExtension(fileExtension(file));
+          const trackExtras = {};
+          if (kind === "audio") {
+            setBgmLibraryMessage(`${file.name} を読み込めるか確認しています...`);
+            await verifyAudioFilePlayable(file);
+          }
+          if (kind === "video") {
+            setBgmLibraryMessage(`${file.name} をBGM用に軽くしています...`);
+            const prepared = await prepareVideoBgmBlob(file);
+            blob = prepared.blob;
+            trackKind = prepared.kind;
+            mimeType = prepared.mimeType;
+            trackExtras.sourceKind = "video";
+            trackExtras.originalFileName = file.name;
+            trackExtras.videoProcess = prepared.status;
+            if (prepared.status === "audio") extractedVideos += 1;
+            if (prepared.status === "compact-video") compactedVideos += 1;
+            if (prepared.status === "original-video") originalVideos += 1;
+          }
+          const track = {
+            id,
+            name: file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "追加BGM",
+            kind: trackKind,
+            type: "custom",
+            mimeType,
+            createdAt: new Date().toISOString(),
+            ...trackExtras,
+          };
+          await putBgmBlob(id, blob);
+          addedTracks.push(track);
+        } catch {
+          if (kind === "audio") failedAudioFiles += 1;
+          else failedSaveFiles += 1;
         }
-        const track = {
-          id,
-          name: file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "追加BGM",
-          kind: trackKind,
-          type: "custom",
-          mimeType,
-          createdAt: new Date().toISOString(),
-          ...trackExtras,
-        };
-        await putBgmBlob(id, blob);
-        addedTracks.push(track);
+      }
+      if (!addedTracks.length) {
+        setBgmLibraryMessage(`BGMを追加できませんでした。対応形式は ${SUPPORTED_BGM_AUDIO_LABEL} と画面録画/動画です`);
+        return;
       }
       updateBgmSound((sound) => ({
         ...sound,
@@ -1589,9 +1721,14 @@ function App() {
       if (compactedVideos) conversionParts.push(`軽量動画化 ${compactedVideos}件`);
       if (originalVideos) conversionParts.push(`そのまま保存 ${originalVideos}件`);
       const warning = originalVideos ? "。一部の動画はアップロードは難しいです。短めの画面録画にすると移植しやすくなります" : "";
-      setBgmLibraryMessage(`${addedTracks.length}件のBGMを追加しました${conversionParts.length ? `（${conversionParts.join("、")}）` : ""}${warning}`);
+      const failedParts = [];
+      if (unsupportedFiles) failedParts.push(`未対応 ${unsupportedFiles}件`);
+      if (failedAudioFiles) failedParts.push(`再生確認失敗 ${failedAudioFiles}件`);
+      if (failedSaveFiles) failedParts.push(`保存失敗 ${failedSaveFiles}件`);
+      const failedNote = failedParts.length ? `。追加できなかったファイルがあります（${failedParts.join("、")}）。対応形式は ${SUPPORTED_BGM_AUDIO_LABEL} です` : "";
+      setBgmLibraryMessage(`${addedTracks.length}件のBGMを追加しました${conversionParts.length ? `（${conversionParts.join("、")}）` : ""}${warning}${failedNote}`);
     } catch {
-      setBgmLibraryMessage("BGMを保存できませんでした。容量やファイル形式を確認してください");
+      setBgmLibraryMessage(`BGMを保存できませんでした。容量やファイル形式を確認してください。対応形式は ${SUPPORTED_BGM_AUDIO_LABEL} です`);
     }
   }
 
@@ -2973,11 +3110,12 @@ function BgmLibraryScreen({
           ref={fileInputRef}
           className="hidden-file-input"
           type="file"
-          accept="audio/*,video/*"
+          accept={BGM_FILE_ACCEPT}
           multiple
           onChange={handleFiles}
         />
         {message && <p className="bgm-message">{message}</p>}
+        <p className="bgm-transfer-note">音声は {SUPPORTED_BGM_AUDIO_LABEL} に対応しています。iPhone/iPadのショートカットで作ったM4Aもそのまま選べます。</p>
         <div className="bgm-track-list">
           {selectedTrackIds.length ? selectedTrackIds.map((trackId, index) => {
             const track = trackById(trackId);
